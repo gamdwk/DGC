@@ -1,0 +1,2 @@
+# DGC
+Distributed Graph Compression
