@@ -1,2 +1,2 @@
 # DGC
-Distributed Graph Compression
+Distributed Graph Condensation
