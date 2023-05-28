@@ -16,8 +16,8 @@ if __name__ == "__main__":
     argparser.add_argument(
         "--dataset",
         type=str,
-        default="reddit",
-        help="datasets: reddit, ogb-product, ogb-paper100M",
+        default="ogbn-arxiv",
+        help="datasets: ogbn-arxiv",
     )
     argparser.add_argument(
         "--num_parts", type=int, default=4, help="number of partitions"
@@ -66,8 +66,8 @@ if __name__ == "__main__":
         g, _ = load_reddit()
     elif args.dataset == "ogb-product":
         g, _ = load_ogb("ogbn-products")
-    elif args.dataset == "ogb-paper100M":
-        g, _ = load_ogb("ogbn-papers100M")
+    elif args.dataset == "ogbn-arxiv":
+        g, _ = load_ogb("ogbn-arxiv")
     print(
         "load {} takes {:.3f} seconds".format(args.dataset, time.time() - start)
     )
