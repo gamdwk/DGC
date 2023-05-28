@@ -58,4 +58,4 @@ def mmd_rbf(source, target, kernel_mul=2.0, kernel_num=5, fix_sigma=None):
     XY = kernels[:batch_size, batch_size2:]
     YX = kernels[batch_size2:, :batch_size]
     loss = torch.mean(XX / (batch_size ^ 2) + YY / (batch_size2 ^ 2) - (2 * batch_size * batch_size2) * (XY + YX))
-    return loss  # 因为一般都是n==m，所以L矩阵一般不加入计算
+    return loss
