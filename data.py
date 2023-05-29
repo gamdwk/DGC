@@ -23,7 +23,7 @@ class DGL2Data(object):
         self.val_mask = None
         self.features_syn = None
         self.class_dict = None
-        self.n_class = None
+        self.n_class = args.n_class
         self.args = args
         self.g = dgl_dist_graph
         self.local_g = dgl.node_subgraph(dgl_dist_graph.local_partition,
@@ -75,6 +75,7 @@ class DGL2Data(object):
 
     def generate_labels_syn(self, labels_train):
         from collections import Counter
+        labels_train = labels_train.tolist()
         counter = Counter(labels_train)
         num_class_dict = {}
         n = len(labels_train)
@@ -99,7 +100,6 @@ class DGL2Data(object):
                 labels_syn += [c] * num_class_dict[c]
 
         self.num_class_dict = num_class_dict
-        self.n_class = len(num_class_dict)
         return torch.LongTensor(labels_syn)
 
     def retrieve_class(self, c, num):

@@ -49,6 +49,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr_model', type=float, default=0.01)
     parser.add_argument('--weight_decay', type=float, default=0.0)
     parser.add_argument('--dropout', type=float, default=0.0)
+    parser.add_argument('--n_class', type=int, default=40)
     parser.add_argument(
         "--local-rank", type=int, help="get rank of the process"
     )

@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+
 import dgl.sparse as dglsp
 import torch
 import torch.nn as nn
@@ -162,3 +164,8 @@ class DistGCN(nn.Module):
             x = y
             g.barrier()
         return y
+
+    @contextmanager
+    def join(self):
+        """dummy join for standalone"""
+        yield

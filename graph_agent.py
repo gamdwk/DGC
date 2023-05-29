@@ -17,11 +17,8 @@ import time
 def get_loops(args):
     # Get the two hyper-parameters of outer-loop and inner-loop.
     # The following values are empirically good.
-    if args.one_step:
-        return 10, 0
-
     if args.dataset in ['ogbn-arxiv']:
-        return 20, 0
+        return 20, 10
     if args.dataset in ['reddit']:
         return args.outer, args.inner
     if args.dataset in ['flickr']:
@@ -70,7 +67,7 @@ class DistGCDM(object):
         # 训练
         self.model = DistGCN(g.ndata["features"].shape[1] * 2, args.hidden, self.data.n_class, nlayers=3,
                              dropout=args.dropout)
-
+        print(self.data.n_class)
         self.optimizer = Adam(self.model.parameters(), lr=args.lr_model, weight_decay=args.weight_decay)
 
         self.loss_fn = mmd_rbf
@@ -81,14 +78,15 @@ class DistGCDM(object):
         self.optimizer_feat = torch.optim.Adam([self.feat_syn], lr=args.lr_feat)
         self.evaluator = evaluator
 
-        print("DC初始化成功")
 
     def train(self):
         feat_syn, pge, labels_syn = self.feat_syn, self.pge, self.labels_syn
-
-        model = nn.parallel.DistributedDataParallel(self.model,
+        pge = pge.to(self.device)
+        model = self.model.to(self.device)
+        model = nn.parallel.DistributedDataParallel(model,
                                                     device_ids=[self.dev_id],
                                                     output_device=self.device)
+
         args = self.args
         model = model.to(self.device)
         model.train()
@@ -97,70 +95,73 @@ class DistGCDM(object):
         for epoch in range(self.args.epochs + 1):
             print("epoch{} begin".format(epoch))
             model.train()
-            for ol in range(outer_loop):
+            with model.join():
+                for ol in range(outer_loop):
 
-                # loss = torch.tensor(0.0).to(self.device)
-                for c in self.n_class:
-                    # input_nodes:计算的数据（包含邻居），output_nodes：不含邻居，需要更新的数据，都是全局节点
-                    # blocks：包含邻居的子图
+                    # loss = torch.tensor(0.0).to(self.device)
+                    for c in range(self.n_class):
+                        # input_nodes:计算的数据（包含邻居），output_nodes：不含邻居，需要更新的数据，都是全局节点
+                        # blocks：包含邻居的子图
+                        adj_syn = pge(self.feat_syn)
+
+                        input_nodes, output_nodes, blocks = self.data.retrieve_class_sampler(c)
+                        batch_inputs, batch_labels = load_subtensor(self.g, blocks[0].srcdata[dgl.NID],
+                                                                    blocks[-1].dstdata[dgl.NID], self.device,
+                                                                    args.reduction_rate, False)
+
+                        dist_full = model(batch_inputs, blocks)
+                        c_syn_ins = self.data.syn_class_indices[c]
+                        local_model = model.module.to(self.device)
+                        dist_syn = local_model(feat_syn[c_syn_ins[0]:c_syn_ins[1]],
+                                               adj_syn[c_syn_ins[0]:c_syn_ins[1], c_syn_ins[0]:c_syn_ins[1]])
+                        rc = dist_full.shape[0] / self.data.syn_num
+                        loss = rc * self.loss_fn(dist_full, dist_syn)
+                        self.optimizer_pge.zero_grad()
+                        self.optimizer_feat.zero_grad()
+                        loss.backward()
+                        if ol % 50 < 10:
+                            self.optimizer_feat.step()
+                        else:
+                            self.optimizer_pge.step()
+                for il in range(inner_loop):
                     adj_syn = pge(self.feat_syn)
-                    input_nodes, output_nodes, blocks = self.data.retrieve_class_sampler(c)
-                    batch_inputs, batch_labels = load_subtensor(self.g, blocks[0].srcdata[dgl.NID],
-                                                                blocks[-1].dstdata[dgl.NID], self.device,
-                                                                args.reduction_rate, False)
+                    for c in range(self.n_class):
+                        input_nodes, output_nodes, blocks = self.data.retrieve_class_sampler(c)
+                        batch_inputs, batch_labels = load_subtensor(self.g, blocks[0].srcdata[dgl.NID],
+                                                                    blocks[-1].dstdata[dgl.NID], self.device,
+                                                                    args.reduction_rate, False)
 
-                    dist_full = model(batch_inputs, blocks)
-                    c_syn_ins = self.data.syn_class_indices[c]
-                    local_model = model.module.to(self.device)
-                    dist_syn = local_model(feat_syn[c_syn_ins[0]:c_syn_ins[1]],
-                                           adj_syn[c_syn_ins[0]:c_syn_ins[1], c_syn_ins[0]:c_syn_ins[1]])
-                    rc = dist_full.shape[0] / self.data.syn_num
-                    loss = rc * self.loss_fn(dist_full, dist_syn)
-                    self.optimizer_pge.zero_grad()
-                    self.optimizer_feat.zero_grad()
-                    loss.backward()
-                    if ol % 50 < 10:
-                        self.optimizer_feat.step()
-                    else:
-                        self.optimizer_pge.step()
-            for il in range(inner_loop):
-                adj_syn = pge(self.feat_syn)
-                for c in self.n_class:
-                    input_nodes, output_nodes, blocks = self.data.retrieve_class_sampler(c)
-                    batch_inputs, batch_labels = load_subtensor(self.g, blocks[0].srcdata[dgl.NID],
-                                                                blocks[-1].dstdata[dgl.NID], self.device,
-                                                                args.reduction_rate, False)
+                        dist_full = model(batch_inputs, blocks)
+                        c_syn_ins = self.data.syn_class_indices[c]
+                        local_model = model.module.to(self.device)
+                        dist_syn = local_model(feat_syn[c_syn_ins[0]:c_syn_ins[1]],
+                                               adj_syn[c_syn_ins[0]:c_syn_ins[1], c_syn_ins[0]:c_syn_ins[1]])
+                        rc = dist_full.shape[0] / self.data.syn_num
+                        loss = rc * self.loss_fn(dist_full, dist_syn)
+                        self.optimizer.zero_grad()
+                        loss.backward()
+                        self.optimizer.step()
+                write_syn_feat(self.feat_syn)
 
-                    dist_full = model(batch_inputs, blocks)
-                    c_syn_ins = self.data.syn_class_indices[c]
-                    local_model = model.module.to(self.device)
-                    dist_syn = local_model(feat_syn[c_syn_ins[0]:c_syn_ins[1]],
-                                           adj_syn[c_syn_ins[0]:c_syn_ins[1], c_syn_ins[0]:c_syn_ins[1]])
-                    rc = dist_full.shape[0] / self.data.syn_num
-                    loss = rc * self.loss_fn(dist_full, dist_syn)
-                    self.optimizer.zero_grad()
-                    loss.backward()
-                    self.optimizer.step()
-            write_syn_feat(self.feat_syn)
-
-            if epoch % args.eval_every == 0 and epoch != 0:
-                start = time.time()
-                val_acc, test_acc = self.evaluate(
-                    model.module if args.standalone else model.module,
-                    self.g,
-                    self.g.ndata["features"],
-                    self.g.ndata["labels"],
-                    self.data.val_nid,
-                    self.data.test_nid,
-                    args.batch_size_eval,
-                    self.device,
-                )
-                print(
-                    "Part {}, Val Acc {:.4f}, Test Acc {:.4f}, time: {:.4f}".format
-                        (
-                        self.g.rank(), val_acc, test_acc, time.time() - start
+                if epoch % args.eval_every == 0 and epoch != 0:
+                    start = time.time()
+                    val_acc, test_acc = self.evaluate(
+                        model.module if args.standalone else model.module,
+                        self.g,
+                        self.g.ndata["features"],
+                        self.g.ndata["labels"],
+                        self.data.val_nid,
+                        self.data.test_nid,
+                        args.batch_size_eval,
+                        self.device,
                     )
-                )
+                    print(
+                        "Part {}, Val Acc {:.4f}, Test Acc {:.4f}, time: {:.4f}".format
+                            (
+                            self.g.rank(), val_acc, test_acc, time.time() - start
+                        )
+                    )
+
         """A = pge.inference()
         A[A < 0.5] = 0"""
 
@@ -178,3 +179,4 @@ class DistGCDM(object):
 
     def compute_acc(self, pred, labels):
         return self.evaluator.eval({"y_pred": pred, "y_true": labels})
+

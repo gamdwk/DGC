@@ -17,7 +17,7 @@ if __name__ == "__main__":
         "--dataset",
         type=str,
         default="ogbn-arxiv",
-        help="datasets: ogbn-arxiv",
+        help="datasets",
     )
     argparser.add_argument(
         "--num_parts", type=int, default=4, help="number of partitions"
