@@ -59,3 +59,4 @@ def mmd_rbf(source, target, kernel_mul=2.0, kernel_num=5, fix_sigma=None):
     YX = kernels[batch_size2:, :batch_size]
     loss = torch.mean(XX / (batch_size ^ 2) + YY / (batch_size2 ^ 2) - (2 * batch_size * batch_size2) * (XY + YX))
     return loss
+

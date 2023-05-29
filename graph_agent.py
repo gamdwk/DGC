@@ -77,7 +77,7 @@ class DistGCDM(object):
         print(1)
         self.pge = PGE(self.feat_syn.shape[1], self.feat_syn.shape[0], args=args)
 
-        self.optimizer_pge = torch.optim.Adam(self.pge.parameters(), lr=args.lr_pge)
+        self.optimizer_pge = torch.optim.Adam(self.pge.parameters(), lr=args.lr_adj)
         self.optimizer_feat = torch.optim.Adam([self.feat_syn], lr=args.lr_feat)
         self.evaluator = evaluator
 

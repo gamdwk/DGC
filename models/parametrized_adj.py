@@ -29,7 +29,9 @@ class PGE(nn.Module):
             self.bns.append(nn.BatchNorm1d(nhid))
         self.layers.append(nn.Linear(nhid, 1))
         print(3)
+        print(nnodes)
         edge_index = np.array(list(product(range(nnodes), range(nnodes))))
+        print(edge_index)
         self.edge_index = edge_index.T
         self.nnodes = nnodes
         self.device = device

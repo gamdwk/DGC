@@ -33,7 +33,7 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--reduction_rate', type=float, default=1)
+    parser.add_argument('--reduction_rate', type=float, default=0.1)
     parser.add_argument('--keep_ratio', type=float, default=1.0)
     parser.add_argument('--inner', type=int, default=0)
     parser.add_argument('--outer', type=int, default=20)
