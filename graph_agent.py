@@ -9,7 +9,6 @@ from ipc import write_syn_feat, write_syn_label_indices
 from mmd import compute_mmd
 from models.dist_gcn import DistGCN
 from models.parametrized_adj import PGE
-from sample import init_remote
 from sample import get_features_remote_syn
 import time
 
@@ -36,11 +35,11 @@ def load_subtensor(g, seeds, input_nodes, device, rate, load_labels=True):
     """
     Copys features and labels of a set of nodes onto GPU.
     """
-    import pdb
+    """import pdb
     p = pdb.Pdb()
-    p.set_trace()
+    p.set_trace()"""
     batch_inputs = get_features_remote_syn(g, input_nodes, rate)
-    #batch_inputs = g.ndata["features"][input_nodes].to(device)
+    # batch_inputs = g.ndata["features"][input_nodes].to(device)
     batch_labels = g.ndata["labels"][seeds].to(device) if load_labels else None
     return batch_inputs, batch_labels
 

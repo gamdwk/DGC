@@ -9,24 +9,40 @@ from collections import Counter
 import torch
 from ipc import read_syn_feat, read_syn_label_indices
 import dgl.utils
-import pdb
+def pull_handler(target, name, id_tensor):
+    """Default handler for PULL operation.
 
+    On default, _pull_handler perform gather_row() operation for the tensor.
+
+    Parameters
+    ----------
+    target : tensor
+        target tensor
+    name : str
+        data name
+    id_tensor : tensor
+        a vector storing the ID list.
+
+    Return
+    ------
+    tensor
+        a tensor with the same row size of ID.
+    """
+    # TODO(chao): support Tensorflow backend
+    return target[name][id_tensor]
 
 class SynFeatRequest(Request):
     def __getstate__(self):
-        return self.idx, self.labels_name, self.rate
+        return self.labels, self.rate
 
     def __setstate__(self, state):
-        self.idx, self.labels_name, self.rate = state
+        self.labels, self.rate = state
 
     def process_request(self, server_state):
+        #print(100)
+        # print(self.__getstate__())
         kv_store = server_state.kv_store
-        if self.labels_name not in kv_store.part_policy:
-            raise RuntimeError("KVServer cannot find partition policy with name: %s" % self.labels_name)
-        if self.labels_name not in kv_store.data_store:
-            raise RuntimeError("KVServer Cannot find data tensor with name: %s" % self.labels_name)
-        local_id = kv_store.part_policy[self.labels_name].to_local(self.idx)
-        labels = kv_store.pull_handlers[self.labels_name](kv_store.data_store, self.labels_name, local_id)
+        labels = self.labels
         labels_dict = {}
 
         syn_label_indices = read_syn_label_indices()
@@ -39,6 +55,7 @@ class SynFeatRequest(Request):
         c = Counter(labels.tolist())
 
         syn_ids = {}
+        #print(c)
         for i, (label, num) in enumerate(c.items()):
             num = num * self.rate
 
@@ -47,22 +64,23 @@ class SynFeatRequest(Request):
             num_all += num
             syn_idx = np.random.randint(syn_label_indices[label][0], syn_label_indices[label][1], num)
             syn_ids[label] = syn_idx
+        #print(labels_dict)
         data = torch.zeros((num_all, d))
         for i, (label, num) in enumerate(c.items()):
             syn_idx = syn_ids[label]
             data[labels_dict[label][0]:labels_dict[label][1]] = syn_feat[syn_idx]
-        local_to_full = torch.zeros((len(self.idx),), dtype=torch.int64)
-
+        local_to_full = torch.zeros((len(self.labels),), dtype=torch.int64)
+        #print(local_to_full)
         for i, label in enumerate(labels.tolist()):
             local_to_full[i] = torch.tensor(np.random.randint(labels_dict[label][0], labels_dict[label][1], 1),
                                             dtype=torch.int64)
-
+        #print(local_to_full)
         res = SynFeatResponse(kv_store.server_id, data, local_to_full)
+        #print(res)
         return res
 
-    def __init__(self, idx, labels_name, rate):
-        self.idx = idx
-        self.labels_name = labels_name
+    def __init__(self, labels, rate):
+        self.labels = labels
         self.rate = rate
 
 
@@ -84,15 +102,14 @@ def take_id(elem):
 
 
 def get_features_remote_syn(g: DistGraph, id_tensor, rate):
-    print("id_tensor:", id_tensor)
-
+    # print(1)
     id_tensor = dgl.utils.toindex(id_tensor)
     id_tensor = id_tensor.tousertensor()
-    print("id_tensor2:", id_tensor)
     features = g.ndata['features']
+
     labels = g.ndata['labels']
-    part_policy = labels._part_policy
-    labels_name = labels._name
+    part_policy = labels.part_policy
+    # labels_name = labels._name
     client = get_kvstore()
 
     pb = g.get_partition_book()
@@ -106,17 +123,21 @@ def get_features_remote_syn(g: DistGraph, id_tensor, rate):
     start = 0
     pull_count = 0
     local_id = None
+    """print(part_id)
+    print(g.rank())
+    print(machine)"""
     for idx, machine_idx in enumerate(machine):
         end = start + count[idx]
         if start == end:  # No data for target machine
             continue
         partial_id = id_tensor[start:end]
+        """print("machine_idx{},part_id{},partial_id{}".format(machine_idx, part_id, partial_id))
+        print("in")"""
         if machine_idx == part_id:  # local pull
             # Note that DO NOT pull local data right now because we can overlap
             # communication-local_pull here
             # local_id = part_policy.to_local(partial_id)
-            local_id = partial_id
-
+            local_id = features.part_policy.to_local(partial_id)
             """print("local_id:", local_id)
             print("partial_id", partial_id)
             a = g.local_partition.ndata[dgl.NID]
@@ -132,32 +153,41 @@ def get_features_remote_syn(g: DistGraph, id_tensor, rate):
             print(features[partial_id])
             print(features.local_partition[local_id])"""
         else:  # pull data from remote server
-            request = SynFeatRequest(partial_id, labels_name, rate)
+            # print(2)
+            idx_labels = labels[partial_id]
+            # print(idx_labels)
+            request = SynFeatRequest(idx_labels, rate)
+            # print(request)
             rpc.send_request_to_machine(machine_idx, request)
             pull_count += 1
         start += count[idx]
     # recv response
     response_list = []
-    if local_id is not None:  # local pull
-
-        # local_data = features.local_partition[local_id]
-        """
-        local_data = features.local_partition[local_id]"""
-        local_data = features[local_id]
-        server_id = part_id
-        local_response = PullResponse(server_id, local_data)
-        response_list.append(local_response)
     # wait response from remote server nodes
     for _ in range(pull_count):
         remote_response = rpc.recv_response()
         response_list.append(remote_response)
+    if local_id is not None:  # local pull
+
+        # local_data = features.local_partition[local_id]
+        # local_data = features[local_id]
+        server_id = part_id
+        from dgl.distributed import DistTensor
+
+        local_data = features[local_id]
+        local_response = PullResponse(server_id, local_data)
+        #print(8)
+        response_list.append(local_response)
+    #print(6)
     # sort response by server_id and concat tensor
     response_list.sort(key=take_id)
 
     def handle(response):
         data = response.data_tensor
         s_id = response.server_id
-        if s_id == part_id:
+        if s_id == part_id or isinstance(response, PullResponse):
+            assert s_id == part_id
+            # print("s_id{},part_id{}".format(s_id, part_id))
             return data
         else:
             local_to_full = response.local_to_full
@@ -165,12 +195,13 @@ def get_features_remote_syn(g: DistGraph, id_tensor, rate):
             data_full = data[local_to_full]
             return data_full
 
+    #print(7)
     data_tensor = F.cat(seq=[handle(response) for response in response_list], dim=0)
     return data_tensor[back_sorted_id]  # return data with original index order
 
 
 def init_remote():
-    MY_SYN_PULL = 638408
+    MY_SYN_PULL = 61120
     rpc.register_service(MY_SYN_PULL, SynFeatRequest,
                          SynFeatResponse)
 

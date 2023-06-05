@@ -28,7 +28,7 @@ def main(args):
     # dgl.seed(args.seed)
     from sample import init_remote
     init_remote()
-    args.num_gpus = 1
+    # args.num_gpus = 1
     dgl.distributed.initialize(args.ip_config)
     if args.standalone is False:
         torch.distributed.init_process_group(backend="gloo")
@@ -42,7 +42,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--reduction_rate', type=float, default=0.005)
-    # parser.add_argument('--keep_ratio', type=float, default=1.0)
+    parser.add_argument('--keep_ratio', type=float, default=1.0)#buzhid
     parser.add_argument('--inner', type=int, default=0)
     parser.add_argument('--outer', type=int, default=20)
     parser.add_argument('--epochs', type=int, default=2000)
@@ -83,6 +83,6 @@ if __name__ == '__main__':
     parser.add_argument(
         "--eval_every",
         type=int,
-        default="10",
+        default=10,
     )
     main(parser.parse_args())
