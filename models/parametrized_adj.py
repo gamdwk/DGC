@@ -1,15 +1,15 @@
 from itertools import product
 
+import dgl.utils
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import dgl.sparse as dglsp
 
 class PGE(nn.Module):
 
     def __init__(self, nfeat, nnodes, nhid=128, nlayers=3, device=None, args=None):
-        print(1)
         super(PGE, self).__init__()
         if args.dataset in ['ogbn-arxiv', 'arxiv', 'flickr']:
             nhid = 256
@@ -19,7 +19,6 @@ class PGE(nn.Module):
                 nhid = 128
             nlayers = 3
             # nhid = 128
-        print(2)
         self.layers = nn.ModuleList([])
         self.layers.append(nn.Linear(nfeat * 2, nhid))
         self.bns = torch.nn.ModuleList()
@@ -28,16 +27,15 @@ class PGE(nn.Module):
             self.layers.append(nn.Linear(nhid, nhid))
             self.bns.append(nn.BatchNorm1d(nhid))
         self.layers.append(nn.Linear(nhid, 1))
-        print(3)
-        print(nnodes)
+
         edge_index = np.array(list(product(range(nnodes), range(nnodes))))
-        print(edge_index)
+
         self.edge_index = edge_index.T
         self.nnodes = nnodes
         self.device = device
-        print(4)
+
         self.reset_parameters()
-        print(5)
+
         self.cnt = 0
         self.args = args
         self.nnodes = nnodes

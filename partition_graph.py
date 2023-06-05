@@ -20,7 +20,7 @@ if __name__ == "__main__":
         help="datasets",
     )
     argparser.add_argument(
-        "--num_parts", type=int, default=4, help="number of partitions"
+        "--num_parts", type=int, default=2, help="number of partitions"
     )
     argparser.add_argument(
         "--part_method", type=str, default="metis", help="the partition method"
@@ -68,6 +68,7 @@ if __name__ == "__main__":
         g, _ = load_ogb("ogbn-products")
     elif args.dataset == "ogbn-arxiv":
         g, _ = load_ogb("ogbn-arxiv")
+        g = dgl.add_self_loop(g)
     print(
         "load {} takes {:.3f} seconds".format(args.dataset, time.time() - start)
     )

@@ -1,62 +1,36 @@
 import torch
+import torch.nn as nn
+nn.CrossEntropyLoss
+
+def compute_mmd(samples_p, samples_q, sigma=1.0):
+    n_p = samples_p.size(0)
+    n_q = samples_q.size(0)
+
+    # 计算核矩阵 K_p
+    pairwise_distances_p = torch.cdist(samples_p, samples_p, p=2)
+    K_p = torch.exp(-pairwise_distances_p ** 2 / (2 * sigma ** 2))
+
+    # 计算核矩阵 K_q
+    pairwise_distances_q = torch.cdist(samples_q, samples_q, p=2)
+    K_q = torch.exp(-pairwise_distances_q ** 2 / (2 * sigma ** 2))
+
+    # 计算混合核矩阵 K_mix
+    pairwise_distances_mix = torch.cdist(samples_p, samples_q, p=2)
+    K_mix = torch.exp(-pairwise_distances_mix ** 2 / (2 * sigma ** 2))
+
+    # 计算 MMD
+    mmd = K_p.sum() / (n_p * (n_p - 1)) + K_q.sum() / (n_q * (n_q - 1)) - 2 * K_mix.sum() / (n_p * n_q)
+
+    return mmd
 
 
-def guassian_kernel(source, target, kernel_mul=2.0, kernel_num=5, fix_sigma=None):
-    '''
-    将源域数据和目标域数据转化为核矩阵，即上文中的K
-    Params: 
-	    source: 源域数据（n * len(x))
-	    target: 目标域数据（m * len(y))
-	    kernel_mul: 
-	    kernel_num: 取不同高斯核的数量
-	    fix_sigma: 不同高斯核的sigma值
-	Return:
-		sum(kernel_val): 多个核矩阵之和
-    '''
-    n_samples = int(source.size()[0]) + int(target.size()[0])  # 求矩阵的行数，一般source和target的尺度是一样的，这样便于计算
-    total = torch.cat([source, target], dim=0)  # 将source,target按列方向合并
-    # 将total复制（n+m）份
-    total0 = total.unsqueeze(0).expand(int(total.size(0)), int(total.size(0)), int(total.size(1)))
-    # 将total的每一行都复制成（n+m）行，即每个数据都扩展成（n+m）份
-    total1 = total.unsqueeze(1).expand(int(total.size(0)), int(total.size(0)), int(total.size(1)))
-    # 求任意两个数据之间的和，得到的矩阵中坐标（i,j）代表total中第i行数据和第j行数据之间的l2 distance(i==j时为0）
-    L2_distance = ((total0 - total1) ** 2).sum(2)
-    # 调整高斯核函数的sigma值
-    if fix_sigma:
-        bandwidth = fix_sigma
-    else:
-        bandwidth = torch.sum(L2_distance.data) / (n_samples ** 2 - n_samples)
-    # 以fix_sigma为中值，以kernel_mul为倍数取kernel_num个bandwidth值（比如fix_sigma为1时，得到[0.25,0.5,1,2,4]
-    bandwidth /= kernel_mul ** (kernel_num // 2)
-    bandwidth_list = [bandwidth * (kernel_mul ** i) for i in range(kernel_num)]
-    # 高斯核函数的数学表达式
-    kernel_val = [torch.exp(-L2_distance / bandwidth_temp) for bandwidth_temp in bandwidth_list]
-    # 得到最终的核矩阵
-    return sum(kernel_val)  # /len(kernel_val)
+if __name__ == '__main__':
+    # 示例用法
+    # 创建样本张量
+    samples_p = torch.randn(100, 10)  # P 分布样本，大小为 100x10
+    samples_q = torch.randn(200, 10)  # Q 分布样本，大小为 200x10
+    sigma = 1.0  # 高斯核函数的带宽参数
 
-
-def mmd_rbf(source, target, kernel_mul=2.0, kernel_num=5, fix_sigma=None):
-    '''
-    计算源域数据和目标域数据的MMD距离
-    Params: 
-	    source: 源域数据（n * len(x))
-	    target: 目标域数据（m * len(y))
-	    kernel_mul: 
-	    kernel_num: 取不同高斯核的数量
-	    fix_sigma: 不同高斯
-	    核的sigma值
-	Return:
-		loss: MMD loss
-    '''
-    batch_size = int(source.size()[0])  # 一般默认为源域和目标域的batchsize相同
-    batch_size2 = int(target.size()[1])
-    kernels = guassian_kernel(source, target,
-                              kernel_mul=kernel_mul, kernel_num=kernel_num, fix_sigma=fix_sigma)
-    # 根据式（3）将核矩阵分成4部分
-    XX = kernels[:batch_size, :batch_size]
-    YY = kernels[batch_size2:, batch_size2:]
-    XY = kernels[:batch_size, batch_size2:]
-    YX = kernels[batch_size2:, :batch_size]
-    loss = torch.mean(XX / (batch_size ^ 2) + YY / (batch_size2 ^ 2) - (2 * batch_size * batch_size2) * (XY + YX))
-    return loss
-
+    # 计算 MMD
+    mmd_value = compute_mmd(samples_p, samples_q, sigma)
+    print("MMD value:", mmd_value.item())

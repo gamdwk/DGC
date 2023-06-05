@@ -6,7 +6,7 @@ from torch.optim import Adam
 
 import data
 from ipc import write_syn_feat, write_syn_label_indices
-from mmd import mmd_rbf
+from mmd import compute_mmd
 from models.dist_gcn import DistGCN
 from models.parametrized_adj import PGE
 from sample import init_remote
@@ -36,7 +36,11 @@ def load_subtensor(g, seeds, input_nodes, device, rate, load_labels=True):
     """
     Copys features and labels of a set of nodes onto GPU.
     """
+    import pdb
+    p = pdb.Pdb()
+    p.set_trace()
     batch_inputs = get_features_remote_syn(g, input_nodes, rate)
+    #batch_inputs = g.ndata["features"][input_nodes].to(device)
     batch_labels = g.ndata["labels"][seeds].to(device) if load_labels else None
     return batch_inputs, batch_labels
 
@@ -60,32 +64,31 @@ class DistGCDM(object):
 
         self.feat_syn = nn.Parameter(self.data.features_syn.to(self.device), requires_grad=True)
 
-        write_syn_feat(self.feat_syn)
+        write_syn_feat(self.feat_syn.data)
 
         write_syn_label_indices(syn_data.syn_class_indices)
 
         # 训练
-        self.model = DistGCN(g.ndata["features"].shape[1] * 2, args.hidden, self.data.n_class, nlayers=3,
+        self.model = DistGCN(g.ndata["features"].shape[1], args.hidden, self.data.n_class, nlayers=3,
                              dropout=args.dropout)
-        print(self.data.n_class)
+
         self.optimizer = Adam(self.model.parameters(), lr=args.lr_model, weight_decay=args.weight_decay)
 
-        self.loss_fn = mmd_rbf
-        print(1)
+        self.loss_fn = compute_mmd
         self.pge = PGE(self.feat_syn.shape[1], self.feat_syn.shape[0], args=args)
 
         self.optimizer_pge = torch.optim.Adam(self.pge.parameters(), lr=args.lr_adj)
         self.optimizer_feat = torch.optim.Adam([self.feat_syn], lr=args.lr_feat)
         self.evaluator = evaluator
 
-
     def train(self):
         feat_syn, pge, labels_syn = self.feat_syn, self.pge, self.labels_syn
         pge = pge.to(self.device)
         model = self.model.to(self.device)
-        model = nn.parallel.DistributedDataParallel(model,
-                                                    device_ids=[self.dev_id],
-                                                    output_device=self.device)
+        if self.args.standalone is False:
+            model = nn.parallel.DistributedDataParallel(model,
+                                                        device_ids=[self.dev_id],
+                                                        output_device=self.device)
 
         args = self.args
         model = model.to(self.device)
@@ -103,19 +106,25 @@ class DistGCDM(object):
                         # input_nodes:计算的数据（包含邻居），output_nodes：不含邻居，需要更新的数据，都是全局节点
                         # blocks：包含邻居的子图
                         adj_syn = pge(self.feat_syn)
+                        syn_g = self.get_syn_g(adj_syn)
 
-                        input_nodes, output_nodes, blocks = self.data.retrieve_class_sampler(c)
-                        batch_inputs, batch_labels = load_subtensor(self.g, blocks[0].srcdata[dgl.NID],
-                                                                    blocks[-1].dstdata[dgl.NID], self.device,
+                        input_nodes, output_nodes, blocks = self.data.retrieve_class_sampler(c, args=self.args)
+                        batch_inputs, batch_labels = load_subtensor(self.g, output_nodes,
+                                                                    input_nodes, self.device,
                                                                     args.reduction_rate, False)
-
+                        # print(batch_inputs, blocks)
+                        blocks = [block.to(self.device) for block in blocks]
+                        batch_inputs = batch_inputs.to(self.device)
                         dist_full = model(batch_inputs, blocks)
                         c_syn_ins = self.data.syn_class_indices[c]
-                        local_model = model.module.to(self.device)
-                        dist_syn = local_model(feat_syn[c_syn_ins[0]:c_syn_ins[1]],
-                                               adj_syn[c_syn_ins[0]:c_syn_ins[1], c_syn_ins[0]:c_syn_ins[1]])
+                        if self.args.standalone is False:
+                            local_model = model.module.to(self.device)
+                        else:
+                            local_model = model
+                        dist_syn = local_model.forward_by_adj(feat_syn,
+                                                              syn_g)
                         rc = dist_full.shape[0] / self.data.syn_num
-                        loss = rc * self.loss_fn(dist_full, dist_syn)
+                        loss = rc * self.loss_fn(dist_full, dist_syn[c_syn_ins[0]:c_syn_ins[1]])
                         self.optimizer_pge.zero_grad()
                         self.optimizer_feat.zero_grad()
                         loss.backward()
@@ -125,28 +134,32 @@ class DistGCDM(object):
                             self.optimizer_pge.step()
                 for il in range(inner_loop):
                     adj_syn = pge(self.feat_syn)
+                    syn_g = self.get_syn_g(adj_syn)
                     for c in range(self.n_class):
-                        input_nodes, output_nodes, blocks = self.data.retrieve_class_sampler(c)
-                        batch_inputs, batch_labels = load_subtensor(self.g, blocks[0].srcdata[dgl.NID],
-                                                                    blocks[-1].dstdata[dgl.NID], self.device,
+                        input_nodes, output_nodes, blocks = self.data.retrieve_class_sampler(c, args=self.args)
+                        batch_inputs, batch_labels = load_subtensor(self.g, output_nodes,
+                                                                    input_nodes, self.device,
                                                                     args.reduction_rate, False)
-
+                        blocks = [block.to(self.device) for block in blocks]
+                        batch_inputs = batch_inputs.to(self.device)
                         dist_full = model(batch_inputs, blocks)
                         c_syn_ins = self.data.syn_class_indices[c]
-                        local_model = model.module.to(self.device)
-                        dist_syn = local_model(feat_syn[c_syn_ins[0]:c_syn_ins[1]],
-                                               adj_syn[c_syn_ins[0]:c_syn_ins[1], c_syn_ins[0]:c_syn_ins[1]])
+                        if self.args.standalone is False:
+                            local_model = model.module.to(self.device)
+                        else:
+                            local_model = model
+                        dist_syn = local_model.forward_by_adj(feat_syn, syn_g)
                         rc = dist_full.shape[0] / self.data.syn_num
-                        loss = rc * self.loss_fn(dist_full, dist_syn)
+                        loss = rc * self.loss_fn(dist_full, dist_syn[c_syn_ins[0]:c_syn_ins[1]])
                         self.optimizer.zero_grad()
                         loss.backward()
                         self.optimizer.step()
-                write_syn_feat(self.feat_syn)
+                write_syn_feat(self.feat_syn.data)
 
                 if epoch % args.eval_every == 0 and epoch != 0:
                     start = time.time()
                     val_acc, test_acc = self.evaluate(
-                        model.module if args.standalone else model.module,
+                        model if args.standalone else model.module,
                         self.g,
                         self.g.ndata["features"],
                         self.g.ndata["labels"],
@@ -170,13 +183,24 @@ class DistGCDM(object):
 
     def evaluate(self, model, g, inputs, labels, val_nid, test_nid, batch_size, device):
         model.eval()
+        device = "cpu"
+        model = model.to("cpu")
         with torch.no_grad():
             pred = model.inference(g, inputs, batch_size, device)
         model.train()
+        model.to(self.device)
         return self.compute_acc(
             pred[val_nid], labels[val_nid]), self.compute_acc(
             pred[test_nid], labels[test_nid])
 
     def compute_acc(self, pred, labels):
-        return self.evaluator.eval({"y_pred": pred, "y_true": labels})
+        pred = torch.argmax(pred, dim=1)
+        return self.evaluator({"y_pred": pred, "y_true": labels})
 
+    def get_syn_g(self, adj):
+        adj[adj < 0.5] = 0
+        adj[adj >= 0.5] = 1
+        edge_index = torch.nonzero(adj, as_tuple=False).t()
+        g = dgl.graph((edge_index[0], edge_index[1]), num_nodes=self.data.syn_num)
+        syn_g = dgl.add_self_loop(g)
+        return syn_g

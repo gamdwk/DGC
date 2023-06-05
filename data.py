@@ -34,16 +34,16 @@ class DGL2Data(object):
         self.init_mask(dgl_dist_graph)
         self.labels_train = dgl_dist_graph.ndata["labels"][self.train_nid]
         self.labels_syn = self.generate_labels_syn(self.labels_train)
-        self.init_features_syn(dgl_dist_graph.ndata["features"], args.reduction_rate)
+        self.init_features_syn(dgl_dist_graph.ndata["features"])
         self.sampler = None
 
-    def init_features_syn(self, features, rate):
-        n = int(features.shape[0] * rate)
+    def init_features_syn(self, features):
+        n = self.syn_num
         d = features.shape[1]
         features_syn = torch.FloatTensor(n, d)
         self.class_dict = {}
         for c in self.num_class_dict.keys():
-            # 存储的是对应的id.
+            # 存储的是bool，不是id.
             self.class_dict[c] = (self.labels_train == c)
         for c in self.num_class_dict.keys():
             num = self.num_class_dict[c]
@@ -81,30 +81,25 @@ class DGL2Data(object):
         n = len(labels_train)
 
         sorted_counter = sorted(counter.items(), key=lambda x: x[1])
-        sum_ = 0
+
         labels_syn = []
         self.syn_class_indices = {}
         # syn_class_indices:合成图中class对应的index范围，闭区间
         # labels_syn:合成图中的label列表。每个长度都是n*reduction_rate。最后一个截断
         # num_class_dict:每个class在合成图中的数量
-        self.syn_num = int(n * self.args.reduction_rate)
+        self.syn_num = 0
         for ix, (c, num) in enumerate(sorted_counter):
-            if ix == len(sorted_counter) - 1:
-                num_class_dict[c] = self.syn_num - sum_
-                self.syn_class_indices[c] = [len(labels_syn), len(labels_syn) + num_class_dict[c]]
-                labels_syn += [c] * num_class_dict[c]
-            else:
-                num_class_dict[c] = max(int(num * self.args.reduction_rate), 1)
-                sum_ += num_class_dict[c]
-                self.syn_class_indices[c] = [len(labels_syn), len(labels_syn) + num_class_dict[c]]
-                labels_syn += [c] * num_class_dict[c]
+            num_class_dict[c] = max(int(num * self.args.reduction_rate), 1)
+            self.syn_num += num_class_dict[c]
+            self.syn_class_indices[c] = [len(labels_syn), len(labels_syn) + num_class_dict[c]]
+            labels_syn += [c] * num_class_dict[c]
 
         self.num_class_dict = num_class_dict
         return torch.LongTensor(labels_syn)
 
     def retrieve_class(self, c, num):
         idx = self.class_dict[c]
-        idx = self.local_g.ndata[dgl.NID][idx.int()]
+        idx = self.get_global_train_idx(idx)
         return np.random.permutation(idx)[:num]
 
     def retrieve_class_sampler(self, c, num=None, args=None):
@@ -123,7 +118,7 @@ class DGL2Data(object):
             sizes = [15, 10, 5, 5, 5]
 
         from dgl.dataloading import NeighborSampler
-        node_idx = torch.LongTensor(self.class_dict2[c])
+        node_idx = self.class_dict2[c]
         node_idx = self.get_global_train_idx(node_idx)
         if self.sampler is None:
             self.sampler = NeighborSampler(sizes)
