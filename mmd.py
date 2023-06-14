@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-nn.CrossEntropyLoss
+from sklearn.metrics.pairwise import rbf_kernel
+
 
 def compute_mmd(samples_p, samples_q, sigma=1.0):
     n_p = samples_p.size(0)
@@ -24,6 +25,76 @@ def compute_mmd(samples_p, samples_q, sigma=1.0):
     return mmd
 
 
+def compute_mmd2(dist1, dist2):
+    """
+    计算两个分布的MMD（Maximum Mean Discrepancy）
+
+    参数:
+        dist1 (torch.Tensor): 第一个分布的样本，形状为 (N, D)
+        dist2 (torch.Tensor): 第二个分布的样本，形状为 (M, D)
+
+    返回:
+        torch.Tensor: MMD的值
+    """
+    # 计算两个分布的样本数量
+    N = dist1.size(0)
+    M = dist2.size(0)
+
+    # 计算两个分布的维度
+    D = dist1.size(1)
+
+    # 将样本堆叠在一起，形成形状为 (N+M, D) 的新样本集合
+    dists = torch.cat([dist1, dist2], dim=0)
+
+    # 计算 Gram 矩阵
+    gram_matrix = torch.matmul(dists, dists.t())
+
+    # 计算第一个分布的 Gram 矩阵部分的均值
+    gram_matrix1 = gram_matrix[:N, :N]
+    mean1 = gram_matrix1.sum() / (N * N)
+
+    # 计算第二个分布的 Gram 矩阵部分的均值
+    gram_matrix2 = gram_matrix[N:, N:]
+    mean2 = gram_matrix2.sum() / (M * M)
+
+    # 计算跨两个分布的 Gram 矩阵部分的均值
+    gram_matrix12 = gram_matrix[:N, N:]
+    mean12 = gram_matrix12.sum() / (N * M)
+
+    # 计算 MMD 的值
+    mmd = mean1 + mean2 - 2 * mean12
+    return mmd
+
+
+def compute_mmd3(dist1, dist2, sigma=1.0, device='cpu'):
+    """
+    通过核技巧近似计算两个分布的MMD（Maximum Mean Discrepancy）
+
+    参数:
+        dist1 (torch.Tensor): 第一个分布的样本，形状为 (N, D)
+        dist2 (torch.Tensor): 第二个分布的样本，形状为 (M, D)
+        sigma (float): RBF核函数的带宽参数
+        device (str): 使用的设备，可以是 'cpu' 或 'cuda'
+
+    返回:
+        torch.Tensor: MMD的值
+    """
+    # 将样本移动到指定的设备上
+    dist1 = dist1.to(device)
+    dist2 = dist2.to(device)
+
+    # 计算样本之间的核矩阵
+    K11 = torch.tensor(rbf_kernel(dist1, dist1, gamma=1.0 / (2 * sigma ** 2)), device=device)
+    K22 = torch.tensor(rbf_kernel(dist2, dist2, gamma=1.0 / (2 * sigma ** 2)), device=device)
+    K12 = torch.tensor(rbf_kernel(dist1, dist2, gamma=1.0 / (2 * sigma ** 2)), device=device)
+
+    # 计算 MMD 的值
+    N = dist1.size(0)
+    M = dist2.size(0)
+    mmd = (K11.sum() / (N * (N - 1))) + (K22.sum() / (M * (M - 1))) - 2 * (K12.sum() / (N * M))
+    return mmd
+
+
 if __name__ == '__main__':
     # 示例用法
     # 创建样本张量
@@ -33,4 +104,14 @@ if __name__ == '__main__':
 
     # 计算 MMD
     mmd_value = compute_mmd(samples_p, samples_q, sigma)
+    mmd_value2 = compute_mmd2(samples_p, samples_q)
+    mmd_value3 = compute_mmd3(samples_p, samples_q)
     print("MMD value:", mmd_value.item())
+    x_known = torch.tensor([[1.0, 2.0], [2.0, 3.0], [3.0, 4.0]])
+    y_known = torch.tensor([[2.0, 3.0]])
+    known_mmd = 0.0567
+
+    # 计算MMD
+    computed_mmd = compute_mmd(x_known, y_known)
+    computed_mmd2 = compute_mmd2(x_known, y_known)
+    computed_mmd3 = compute_mmd3(x_known, y_known)

@@ -12,7 +12,7 @@ import tqdm
 import dgl
 import dgl.nn.pytorch as dglnn
 from torch.distributed.elastic.multiprocessing.errors import record
-
+from nic import get_network_counters,compute_nic,create_start_nic
 
 def load_subtensor(g, seeds, input_nodes, device, load_feat=True):
     """
@@ -41,7 +41,7 @@ class DistSAGE(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.activation = activation
 
-    def forward(self, blocks, x):
+    def forward(self, x, blocks):
         h = x
         for i, (layer, block) in enumerate(zip(self.layers, blocks)):
             h = layer(block, h)
@@ -165,21 +165,25 @@ def run(args, device, data):
         drop_last=False,
     )
     # Define model and optimizer
-    model = DistSAGE(
+    from models.dist_gcn import DistGCN
+    model = DistGCN(in_feats, args.num_hidden,
+                    n_classes,
+                    args.num_layers)
+    """model = DistSAGE(
         in_feats,
         args.num_hidden,
         n_classes,
         args.num_layers,
         F.relu,
         args.dropout,
-    )
+    )"""
     model = model.to(device)
     if not args.standalone:
         if args.num_gpus == -1:
             model = th.nn.parallel.DistributedDataParallel(model)
         else:
             model = th.nn.parallel.DistributedDataParallel(
-                model, device_ids=[device], output_device=device
+                model, device_ids=[device], output_device=device, find_unused_parameters=True
             )
     loss_fcn = nn.CrossEntropyLoss()
     loss_fcn = loss_fcn.to(device)
@@ -188,9 +192,10 @@ def run(args, device, data):
     # Training loop
     iter_tput = []
     epoch = 0
+    net_inter = "eth0"
     for epoch in range(args.num_epochs):
-        tic = time.time()
-
+        #tic = time.time()
+        start_counters, tic = create_start_nic(net_inter)
         sample_time = 0
         forward_time = 0
         backward_time = 0
@@ -219,7 +224,7 @@ def run(args, device, data):
                 batch_labels = batch_labels.to(device)
                 # Compute loss and prediction
                 start = time.time()
-                batch_pred = model(blocks, batch_inputs)
+                batch_pred = model(batch_inputs, blocks)
                 loss = loss_fcn(batch_pred, batch_labels)
                 forward_end = time.time()
                 optimizer.zero_grad()
@@ -272,10 +277,11 @@ def run(args, device, data):
                 num_inputs,
             )
         )
-        epoch += 1
+        #epoch += 1
 
         if epoch % args.eval_every == 0 and epoch != 0:
             start = time.time()
+            compute_nic(start_counters,tic,net_inter)
             val_acc, test_acc = evaluate(
                 model if args.standalone else model.module,
                 g,
@@ -369,11 +375,10 @@ def main(args):
     in_feats = g.ndata["features"].shape[1]
     data = train_nid, val_nid, test_nid, in_feats, n_classes, g
     run(args, device, data)
-    print("parent ends")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="GCN")
+    parser = argparse.ArgumentParser()
     parser.add_argument("--graph_name", type=str, help="graph name")
     parser.add_argument("--id", type=int, help="the partition id")
     parser.add_argument(
@@ -398,17 +403,17 @@ if __name__ == "__main__":
         help="the number of GPU device. Use -1 for CPU training",
     )
     parser.add_argument("--num_epochs", type=int, default=20)
-    parser.add_argument("--num_hidden", type=int, default=16)
-    parser.add_argument("--num_layers", type=int, default=2)
-    parser.add_argument("--fan_out", type=str, default="10,25")
+    parser.add_argument("--num_hidden", type=int, default=256)
+    parser.add_argument("--num_layers", type=int, default=3)
+    parser.add_argument("--fan_out", type=str, default="10,25,10")
     parser.add_argument("--batch_size", type=int, default=1024)
     parser.add_argument("--batch_size_eval", type=int, default=100000)
-    parser.add_argument("--log_every", type=int, default=20)
+    parser.add_argument("--log_every", type=int, default=10)
     parser.add_argument("--eval_every", type=int, default=5)
-    parser.add_argument("--lr", type=float, default=0.003)
-    parser.add_argument("--dropout", type=float, default=0.5)
+    parser.add_argument("--lr", type=float, default=0.01)
+    parser.add_argument("--dropout", type=float, default=0.0)
     parser.add_argument(
-        "--local_rank", type=int, help="get rank of the process"
+        "--local-rank", type=int, help="get rank of the process"
     )
     parser.add_argument(
         "--standalone", action="store_true", help="run in the standalone mode"
@@ -427,5 +432,4 @@ if __name__ == "__main__":
         help="backend net type, 'socket' or 'tensorpipe'",
     )
     args = parser.parse_args()
-
     main(args)

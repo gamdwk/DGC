@@ -37,6 +37,28 @@ def monitor_network_counters(interface, duration):
             break
 
 
+def create_start_nic(interface):
+    start_counters = get_network_counters(interface)
+    start_time = time.time()
+    return start_counters, start_time
+
+
+def compute_nic(start_counters, start_time, interface):
+    current_counters = get_network_counters(interface)
+    elapsed_time = time.time() - start_time
+
+    # 计算流量速率
+    rx_bytes = current_counters.bytes_recv - start_counters.bytes_recv
+    tx_bytes = current_counters.bytes_sent - start_counters.bytes_sent
+    rx_speed = rx_bytes / elapsed_time
+    tx_speed = tx_bytes / elapsed_time
+    return elapsed_time, rx_speed, tx_speed
+    # 输出结果
+    """print(f"时间: {elapsed_time:.2f}秒")
+    print(f"接收: {rx_speed:.2f} bytes/秒")
+    print(f"发送: {tx_speed:.2f} bytes/秒")"""
+
+
 # 主程序
 if __name__ == "__main__":
     interface = "eth0"  # 更改为要监控的网络接口名称

@@ -1,5 +1,4 @@
 docker exec -it dgc1 bash
-conda activate GCond
 service ssh start
 python3 /home/sj/nvme/DGC/launch.py \
 --workspace /home/sj/nvme/DGC \

@@ -89,7 +89,7 @@ class DGL2Data(object):
         # num_class_dict:每个class在合成图中的数量
         self.syn_num = 0
         for ix, (c, num) in enumerate(sorted_counter):
-            num_class_dict[c] = max(int(num * self.args.reduction_rate), 1)
+            num_class_dict[c] = max(int(num * self.args.reduction_rate), 2)
             self.syn_num += num_class_dict[c]
             self.syn_class_indices[c] = [len(labels_syn), len(labels_syn) + num_class_dict[c]]
             labels_syn += [c] * num_class_dict[c]
@@ -104,7 +104,7 @@ class DGL2Data(object):
 
     def retrieve_class_sampler(self, c, num=None, args=None):
         self.class_dict2 = self.class_dict
-        sizes = [15, 10, 5]
+        """sizes = [15, 10, 5]
         if args.nlayers == 1:
             sizes = [15]
         if args.nlayers == 2:
@@ -115,8 +115,8 @@ class DGL2Data(object):
         if args.nlayers == 4:
             sizes = [15, 10, 5, 5]
         if args.nlayers == 5:
-            sizes = [15, 10, 5, 5, 5]
-
+            sizes = [15, 10, 5, 5, 5]"""
+        sizes = [int(fanout) for fanout in args.fan_out.split(",")]
         from dgl.dataloading import NeighborSampler
         node_idx = self.class_dict2[c]
         node_idx = self.get_global_train_idx(node_idx)
@@ -128,6 +128,34 @@ class DGL2Data(object):
             batch = node_idx
         out = self.sampler.sample(self.g, batch)
         return out
+
+    def retrieve_local_class_sampler(self, c, num=None, args=None):
+        """sizes = [15, 10, 5]
+        if args.nlayers == 1:
+            sizes = [15]
+        if args.nlayers == 2:
+            sizes = [10, 5]
+            # sizes = [-1, -1]
+        if args.nlayers == 3:
+            sizes = [15, 10, 5]
+        if args.nlayers == 4:
+            sizes = [15, 10, 5, 5]
+        if args.nlayers == 5:
+            sizes = [15, 10, 5, 5, 5]"""
+        sizes = [int(fanout) for fanout in args.fan_out.split(",")]
+        seeds = torch.nonzero(self.g.ndata["labels"].local_partition == c)
+        if num is not None:
+            seeds = seeds[:num]
+        from dgl.dataloading import NeighborSampler
+        if self.sampler is None:
+            self.sampler = NeighborSampler(sizes)
+        out = self.sampler.sample(self.local_g, seeds)
+        return out
+
+    def load_local_sub_tensor(self, output_nodes, input_nodes, device, load_labels=False):
+        batch_inputs = self.g.ndata["features"].local_partition[input_nodes].to(device)
+        batch_labels = self.g.ndata["labels"].local_partition[output_nodes].to(device) if load_labels else None
+        return batch_inputs, batch_labels
 
     def get_global_idx(self, idx):
         return self.idx_full[idx]

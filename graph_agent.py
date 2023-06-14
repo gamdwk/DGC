@@ -11,6 +11,7 @@ from models.dist_gcn import DistGCN
 from models.parametrized_adj import PGE
 from sample import get_features_remote_syn
 import time
+from nic import create_start_nic, compute_nic
 
 
 def get_loops(args):
@@ -74,10 +75,12 @@ class DistGCDM(object):
         self.optimizer = Adam(self.model.parameters(), lr=args.lr_model, weight_decay=args.weight_decay)
 
         self.loss_fn = compute_mmd
+        self.cross_loss = nn.CrossEntropyLoss()
         self.pge = PGE(self.feat_syn.shape[1], self.feat_syn.shape[0], args=args)
 
         self.optimizer_pge = torch.optim.Adam(self.pge.parameters(), lr=args.lr_adj)
         self.optimizer_feat = torch.optim.Adam([self.feat_syn], lr=args.lr_feat)
+
         self.evaluator = evaluator
 
     def train(self):
@@ -94,12 +97,27 @@ class DistGCDM(object):
         model.train()
         outer_loop, inner_loop = get_loops(args)
         self.optimizer.zero_grad()
+        net_interface = "eth0"
+        il_iter_tput = []
+        ol_iter_tput = []
         for epoch in range(self.args.epochs + 1):
+            start_counters, start_time = create_start_nic(net_interface)
+            # compute_nic(start_counters, start_time, net_interface)
+            # start_counters, start_time = create_start_nic(net_interface)
             print("epoch{} begin".format(epoch))
             model.train()
+            tic = time.time()
             with model.join():
+                ol_step_time = []
+                ol_sample_time = 0
+                ol_forward_time = 0
+                ol_backward_time = 0
+                ol_update_time = 0
+                ol_num_seeds = 0
+                ol_num_inputs = 0
+                ol_start = time.time()
                 for ol in range(outer_loop):
-
+                    tic_step = time.time()
                     # loss = torch.tensor(0.0).to(self.device)
                     for c in range(self.n_class):
                         # input_nodes:计算的数据（包含邻居），output_nodes：不含邻居，需要更新的数据，都是全局节点
@@ -108,55 +126,158 @@ class DistGCDM(object):
                         syn_g = self.get_syn_g(adj_syn)
 
                         input_nodes, output_nodes, blocks = self.data.retrieve_class_sampler(c, args=self.args)
+                        ol_sample_time += tic_step - ol_start
                         batch_inputs, batch_labels = load_subtensor(self.g, output_nodes,
                                                                     input_nodes, self.device,
-                                                                    args.reduction_rate, False)
+                                                                    args.reduction_rate, True)
                         # print(batch_inputs, blocks)
+
                         blocks = [block.to(self.device) for block in blocks]
                         batch_inputs = batch_inputs.to(self.device)
+                        ol_num_seeds += len(blocks[-1].dstdata[dgl.NID])
+                        ol_num_inputs += len(blocks[0].srcdata[dgl.NID])
                         dist_full = model(batch_inputs, blocks)
                         c_syn_ins = self.data.syn_class_indices[c]
+                        ol_start = time.time()
                         if self.args.standalone is False:
                             local_model = model.module.to(self.device)
                         else:
                             local_model = model
                         dist_syn = local_model.forward_by_adj(feat_syn,
                                                               syn_g)
+                        forward_end = time.time()
                         rc = dist_full.shape[0] / self.data.syn_num
                         loss = rc * self.loss_fn(dist_full, dist_syn[c_syn_ins[0]:c_syn_ins[1]])
+
+                        ol_forward_time += forward_end - ol_start
+
                         self.optimizer_pge.zero_grad()
                         self.optimizer_feat.zero_grad()
                         loss.backward()
+                        compute_end = time.time()
+                        ol_backward_time += compute_end - forward_end
                         if ol % 50 < 10:
                             self.optimizer_feat.step()
                         else:
                             self.optimizer_pge.step()
+                        ol_update_time += time.time() - compute_end
+                        step_t = time.time() - tic_step
+                        ol_step_time.append(step_t)
+                        ol_iter_tput.append(len(blocks[-1].dstdata[dgl.NID]) / step_t)
+                    if ol % args.log_every == 0:
+                        acc = self.compute_acc(dist_full, batch_labels)
+                        import torch as th
+                        import numpy as np
+                        gpu_mem_alloc = (
+                            th.cuda.max_memory_allocated() / 1000000
+                            if th.cuda.is_available()
+                            else 0
+                        )
+                        print(
+                            "Part {} | Epoch {:05d} | ol_Step {:06d} | Loss {:.4f} | "
+                            "Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU "
+                            "{:.1f} MB | time {:.3f} s".format(
+                                self.g.rank(),
+                                epoch,
+                                ol,
+                                loss.item(),
+                                acc.item(),
+                                np.mean(ol_iter_tput[3 * self.n_class:]),
+                                gpu_mem_alloc,
+                                np.sum(ol_step_time[-args.log_every * self.n_class:]),
+                            )
+                        )
+                    ol_start = time.time()
+                write_syn_feat(self.feat_syn.data)
+                il_step_time = []
+                il_sample_time = 0
+                il_forward_time = 0
+                il_backward_time = 0
+                il_update_time = 0
+                il_num_seeds = 0
+                il_num_inputs = 0
+                il_start = time.time()
                 for il in range(inner_loop):
-                    adj_syn = pge(self.feat_syn)
-                    syn_g = self.get_syn_g(adj_syn)
+                    # adj_syn = pge(self.feat_syn)
+                    tic_step = time.time()
+                    # syn_g = self.get_syn_g(adj_syn)
                     for c in range(self.n_class):
                         input_nodes, output_nodes, blocks = self.data.retrieve_class_sampler(c, args=self.args)
+                        il_sample_time += tic_step - il_start
                         batch_inputs, batch_labels = load_subtensor(self.g, output_nodes,
                                                                     input_nodes, self.device,
-                                                                    args.reduction_rate, False)
+                                                                    args.reduction_rate, True)
                         blocks = [block.to(self.device) for block in blocks]
+                        batch_labels = batch_labels.long()
+                        il_num_seeds += len(blocks[-1].dstdata[dgl.NID])
+                        il_num_inputs += len(blocks[0].srcdata[dgl.NID])
                         batch_inputs = batch_inputs.to(self.device)
+                        il_start = time.time()
                         dist_full = model(batch_inputs, blocks)
-                        c_syn_ins = self.data.syn_class_indices[c]
+                        """c_syn_ins = self.data.syn_class_indices[c]
                         if self.args.standalone is False:
                             local_model = model.module.to(self.device)
                         else:
                             local_model = model
                         dist_syn = local_model.forward_by_adj(feat_syn, syn_g)
-                        rc = dist_full.shape[0] / self.data.syn_num
-                        loss = rc * self.loss_fn(dist_full, dist_syn[c_syn_ins[0]:c_syn_ins[1]])
+                        rc = dist_full.shape[0] / self.data.syn_num"""
+                        # loss = rc * self.loss_fn(dist_full, dist_syn[c_syn_ins[0]:c_syn_ins[1]])
+                        forward_end = time.time()
+                        loss = self.cross_loss(dist_full, batch_labels)
+                        compute_end = time.time()
+                        il_forward_time += forward_end - il_start
                         self.optimizer.zero_grad()
                         loss.backward()
+                        il_backward_time += compute_end - forward_end
                         self.optimizer.step()
-                write_syn_feat(self.feat_syn.data)
+                        il_update_time += time.time() - compute_end
 
+                        step_t = time.time() - tic_step
+                        il_step_time.append(step_t)
+                        il_iter_tput.append(len(blocks[-1].dstdata[dgl.NID]) / step_t)
+                    if il % args.log_every == 0:
+                        acc = self.compute_acc(dist_full, batch_labels)
+                        import torch as th
+                        import numpy as np
+                        gpu_mem_alloc = (
+                            th.cuda.max_memory_allocated() / 1000000
+                            if th.cuda.is_available()
+                            else 0
+                        )
+                        print(
+                            "Part {} | Epoch {:05d} | il_Step {:06d} | Loss {:.4f} | "
+                            "Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU "
+                            "{:.1f} MB | time {:.3f} s".format(
+                                self.g.rank(),
+                                epoch,
+                                il,
+                                loss.item(),
+                                acc.item(),
+                                np.mean(il_iter_tput[3 * self.n_class:]),
+                                gpu_mem_alloc,
+                                np.sum(il_step_time[-args.log_every * self.n_class:]),
+                            )
+                        )
+                    il_start = time.time()
+                # write_syn_feat(self.feat_syn.data)
+                toc = time.time()
+                print(
+                    "Part {}, Epoch Time(s): {:.4f}, sample+data_copy: {:.4f}, "
+                    "forward: {:.4f}, backward: {:.4f}, update: {:.4f}, #seeds: {}, "
+                    "#inputs: {}".format(
+                        self.g.rank(),
+                        toc - tic,
+                        il_sample_time,
+                        il_forward_time,
+                        il_backward_time,
+                        il_update_time,
+                        il_num_seeds,
+                        il_num_inputs,
+                    )
+                )
                 if epoch % args.eval_every == 0 and epoch != 0:
-                    start = time.time()
+                    il_start = time.time()
+
                     val_acc, test_acc = self.evaluate(
                         model if args.standalone else model.module,
                         self.g,
@@ -170,7 +291,7 @@ class DistGCDM(object):
                     print(
                         "Part {}, Val Acc {:.4f}, Test Acc {:.4f}, time: {:.4f}".format
                             (
-                            self.g.rank(), val_acc, test_acc, time.time() - start
+                            self.g.rank(), val_acc, test_acc, time.time() - il_start
                         )
                     )
 

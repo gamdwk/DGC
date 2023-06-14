@@ -49,6 +49,10 @@ class DistGCN(nn.Module):
         self.adj_norm = None
         self.features = None
         self.multi_label = None
+        self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(dropout)
+        self.sigmoid = nn.Sigmoid()
+        # self.log_sigmoid = nn.LogSigmoid()
 
     def forward(self, x, blocks):
         for ix, (layer, block) in enumerate(zip(self.layers, blocks)):
@@ -56,15 +60,14 @@ class DistGCN(nn.Module):
             if ix != len(self.layers) - 1:
                 x = self.bns[ix](x) if self.with_bn else x
                 if self.with_relu:
-                    x = F.relu(x)
-                x = F.dropout(x, self.dropout, training=self.training)
+                    x = self.relu(x)
+                x = self.dropout(x, )
         if self.multi_label:
             return torch.sigmoid(x)
         else:
             return F.log_softmax(x, dim=1)
 
     def forward_by_adj(self, x, g):
-
         x = x.to(self.device)
         g = g.to(self.device)
         for ix, layer in enumerate(self.layers):
@@ -72,10 +75,10 @@ class DistGCN(nn.Module):
             if ix != len(self.layers) - 1:
                 x = self.bns[ix](x) if self.with_bn else x
                 if self.with_relu:
-                    x = F.relu(x)
-                x = F.dropout(x, self.dropout, training=self.training)
+                    x = self.relu(x)
+                x = self.dropout(x)
         if self.multi_label:
-            return torch.sigmoid(x)
+            return self.sigmoid(x)
         else:
             return F.log_softmax(x, dim=1)
 
@@ -148,15 +151,14 @@ class DistGCN(nn.Module):
                 h = layer(block, (h, h_dst))
                 h = self.bns[i](h) if self.with_bn else h
                 if self.with_relu:
-                    h = F.relu(h)
-                h = F.dropout(h, self.dropout, training=self.training)
+                    h = self.relu(h)
+                h = self.dropout(h)
                 if i == len(self.layers) - 1:
                     if self.multi_label:
-                        h = torch.sigmoid(h)
+                        h = self.sigmoid(h)
                     else:
                         h = F.log_softmax(h, dim=1)
                 y[output_nodes] = h.cpu()
-
 
             x = y
             g.barrier()
@@ -167,5 +169,6 @@ class DistGCN(nn.Module):
         """dummy join for standalone"""
         yield
 
+
 if __name__ == '__main__':
-    gcn = DistGCN(128,128,40)
+    gcn = DistGCN(128, 128, 40)

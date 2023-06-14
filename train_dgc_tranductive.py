@@ -1,5 +1,6 @@
 import argparse
 import random
+import time
 
 import dgl
 import numpy as np
@@ -7,8 +8,21 @@ import torch
 from dgl.distributed import DistGraph
 from ogb.nodeproppred import Evaluator
 
-from data import DGL2Data
-from graph_agent import DistGCDM
+from data_multi import DGL2Data
+from graph_agent_multi import DistGCDM, Condenser
+
+
+def init(args):
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed(args.seed)
+    # dgl.seed(args.seed)
+    from sample import init_remote
+    init_remote()
+    dgl.distributed.initialize(args.ip_config)
+    if args.standalone is False:
+        torch.distributed.init_process_group(backend="gloo")
 
 
 def evaluate(input_dict):
@@ -17,35 +31,80 @@ def evaluate(input_dict):
     return (y_true == y_pred).float().sum() / len(y_pred)
 
 
-def main(args):
-    # torch.cuda.set_device(args.gpu_id)
+def train(x, args):
+    init(args)
+    g = DistGraph(args.dataset, part_config="data/{}.json".format(args.dataset))
+    if args.num_gpus == -1:
+        device = torch.device("cpu")
+        dcdm = DistGCDM(g, args, evaluate, device=device)
+    else:
+        dev_id = g.rank() % args.num_gpus
+        device = torch.device("cuda:" + str(dev_id))
+        dcdm = DistGCDM(g, args, evaluate, device=device, dev_id=dev_id)  # Evaluator(name=args.dataset))
+    import torch.multiprocessing as mp
+    rank = g.rank()
+    #process = mp.Process(target=condense, args=(args, rank), daemon=True)
+    # mp.spawn(condense, args=(args,), daemon=True)
+    #process.start()
+    data = DGL2Data('data/{}.json'.format(args.dataset), rank, args)
+    if args.num_gpus == -1:
+        device = torch.device("cpu")
+        condenser = Condenser(data, device, args)
+    else:
+        dev_id = data.rank % args.num_gpus
+        device = torch.device("cuda:" + str(dev_id))
+        condenser = Condenser(data, device, args, dev_id)
+    dcdm.train()
+    #process.join()
+    # condense(args, rank)
 
-    # random seed setting
+
+def condense(args, rank):
+    # init(args)
+    import os
+    import sys
+
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)
-    # dgl.seed(args.seed)
-    from sample import init_remote
-    init_remote()
-    # args.num_gpus = 1
-    dgl.distributed.initialize(args.ip_config)
-    if args.standalone is False:
-        torch.distributed.init_process_group(backend="gloo")
+    data = DGL2Data('data/{}.json'.format(args.dataset), rank, args)
+    if args.num_gpus == -1:
+        device = torch.device("cpu")
+        condenser = Condenser(data, device, args)
+    else:
+        dev_id = data.rank % args.num_gpus
+        device = torch.device("cuda:" + str(dev_id))
+        condenser = Condenser(data, device, args, dev_id)
+    with open(f"condense_{data.rank}.txt", "w") as f:
+        sys.stdout = f
+        sys.stderr = f
+        condenser.condense()
 
-    g = DistGraph(args.dataset, part_config="data/{}.json".format(args.dataset))
-    data = DGL2Data(g, args)
-    dcdm = DistGCDM(g, data, args, evaluate)  # Evaluator(name=args.dataset))
-    dcdm.train()
+
+def main(args):
+    print(args.local_rank)
+    # torch.cuda.set_device(args.gpu_id)
+
+    # random seed setting
+    # init(args)
+    # g = DistGraph(args.dataset, part_config="data/{}.json".format(args.dataset))
+
+    import torch.multiprocessing as mp
+    # mp.spawn()
+    # ma = mp.Manager()
+    # ma.start()
+    train(1, args)
+    # mp.spawn(train, args=(args,))
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--reduction_rate', type=float, default=0.005)
-    parser.add_argument('--keep_ratio', type=float, default=1.0)#buzhid
+    parser.add_argument('--keep_ratio', type=float, default=1.0)  # buzhid
     parser.add_argument('--inner', type=int, default=0)
     parser.add_argument('--outer', type=int, default=20)
-    parser.add_argument('--epochs', type=int, default=2000)
+    parser.add_argument('--epochs', type=int, default=30)
     parser.add_argument('--seed', type=int, default=15, help='Random seed.')
     parser.add_argument('--num_gpus', type=int, default=-1, help='num_gpus')
     parser.add_argument('--dataset', type=str, default='ogbn-arxiv')
@@ -65,9 +124,6 @@ if __name__ == '__main__':
         "--standalone", type=bool, default=False, help="standalone"
     )
     parser.add_argument(
-        "--batch_size_eval", type=int, default=1000
-    )
-    parser.add_argument(
         "--pad-data",
         default=False,
         action="store_true",
@@ -80,9 +136,9 @@ if __name__ == '__main__':
         default="socket",
         help="backend net type, 'socket' or 'tensorpipe'",
     )
-    parser.add_argument(
-        "--eval_every",
-        type=int,
-        default=10,
-    )
+    parser.add_argument("--fan_out", type=str, default="10,25,10")
+    parser.add_argument("--batch_size", type=int, default=1024)
+    parser.add_argument("--batch_size_eval", type=int, default=100000)
+    parser.add_argument("--log_every", type=int, default=10)
+    parser.add_argument("--eval_every", type=int, default=5)
     main(parser.parse_args())

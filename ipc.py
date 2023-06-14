@@ -66,3 +66,12 @@ def read_syn_label_indices():
     return get_memory(25578)
     """global syn_label_indices
     return syn_label_indices"""
+
+def write_model(model):
+    set_memory(28567, model)
+    """global syn_label_indices
+    syn_label_indices = indicates"""
+
+
+def read_model():
+    return get_memory(28567)

@@ -9,6 +9,8 @@ from collections import Counter
 import torch
 from ipc import read_syn_feat, read_syn_label_indices
 import dgl.utils
+
+
 def pull_handler(target, name, id_tensor):
     """Default handler for PULL operation.
 
@@ -31,6 +33,7 @@ def pull_handler(target, name, id_tensor):
     # TODO(chao): support Tensorflow backend
     return target[name][id_tensor]
 
+
 class SynFeatRequest(Request):
     def __getstate__(self):
         return self.labels, self.rate
@@ -39,8 +42,10 @@ class SynFeatRequest(Request):
         self.labels, self.rate = state
 
     def process_request(self, server_state):
-        #print(100)
+        # print(100)
         # print(self.__getstate__())
+        import time
+        t1 = time.time()
         kv_store = server_state.kv_store
         labels = self.labels
         labels_dict = {}
@@ -55,7 +60,7 @@ class SynFeatRequest(Request):
         c = Counter(labels.tolist())
 
         syn_ids = {}
-        #print(c)
+        # print(c)
         for i, (label, num) in enumerate(c.items()):
             num = num * self.rate
 
@@ -64,19 +69,20 @@ class SynFeatRequest(Request):
             num_all += num
             syn_idx = np.random.randint(syn_label_indices[label][0], syn_label_indices[label][1], num)
             syn_ids[label] = syn_idx
-        #print(labels_dict)
+        # print(labels_dict)
         data = torch.zeros((num_all, d))
         for i, (label, num) in enumerate(c.items()):
             syn_idx = syn_ids[label]
             data[labels_dict[label][0]:labels_dict[label][1]] = syn_feat[syn_idx]
         local_to_full = torch.zeros((len(self.labels),), dtype=torch.int64)
-        #print(local_to_full)
+        # print(local_to_full)
         for i, label in enumerate(labels.tolist()):
             local_to_full[i] = torch.tensor(np.random.randint(labels_dict[label][0], labels_dict[label][1], 1),
                                             dtype=torch.int64)
-        #print(local_to_full)
+        # print(local_to_full)
         res = SynFeatResponse(kv_store.server_id, data, local_to_full)
-        #print(res)
+        print("返回请求", time.time() - t1)
+        # print(res)
         return res
 
     def __init__(self, labels, rate):
@@ -176,9 +182,9 @@ def get_features_remote_syn(g: DistGraph, id_tensor, rate):
 
         local_data = features[local_id]
         local_response = PullResponse(server_id, local_data)
-        #print(8)
+        # print(8)
         response_list.append(local_response)
-    #print(6)
+    # print(6)
     # sort response by server_id and concat tensor
     response_list.sort(key=take_id)
 
@@ -195,7 +201,7 @@ def get_features_remote_syn(g: DistGraph, id_tensor, rate):
             data_full = data[local_to_full]
             return data_full
 
-    #print(7)
+    # print(7)
     data_tensor = F.cat(seq=[handle(response) for response in response_list], dim=0)
     return data_tensor[back_sorted_id]  # return data with original index order
 
