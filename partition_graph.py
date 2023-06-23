@@ -68,7 +68,7 @@ if __name__ == "__main__":
         g, _ = load_ogb("ogbn-products")
     elif args.dataset == "ogbn-arxiv":
         g, _ = load_ogb("ogbn-arxiv")
-        g = dgl.add_self_loop(g)
+    g = dgl.add_self_loop(g)
     print(
         "load {} takes {:.3f} seconds".format(args.dataset, time.time() - start)
     )

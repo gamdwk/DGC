@@ -13,9 +13,12 @@ def mask_to_index(index, size):
 
 class DGL2Data(object):
     def __init__(self, part_json, rank, args, **kwargs):
+        self.sorted_counter = None
         self.part_json = part_json
         self.rank = rank
+        print("load_data")
         g, ndata, edata, pb, g_name, node_types, edge_types = load_partition(part_json, rank)
+        print("load_data成功")
         self.syn_num = None
         # self.class_dict2 = None
         self.num_class_dict = None
@@ -44,6 +47,7 @@ class DGL2Data(object):
         self.init_features_syn(self.local_g.ndata['features'])
         self.sampler = None
         write_syn_label_indices(self.syn_class_indices)
+        print("初始化成功")
 
     def init_features_syn(self, features):
         n = self.syn_num
@@ -57,7 +61,15 @@ class DGL2Data(object):
         for c in self.num_class_dict.keys():
             num = self.num_class_dict[c]
             idx = self.retrieve_class(c, num)
+            if idx.shape[0] < 2:
+                temp = np.zeros((2,),dtype=int)
+                temp[0] = idx[0]
+                temp[1] = idx[0]
+                idx = temp
+                #idx = torch.cat(torch.from_numpy([idx, idx]))
             idx = torch.from_numpy(np.squeeze(idx))
+            # print(idx)
+
             features_syn[self.syn_class_indices[c][0]:self.syn_class_indices[c][1]] = \
                 features[idx][:num]
         self.features_syn = features_syn
@@ -78,7 +90,7 @@ class DGL2Data(object):
         n = len(labels_train)
 
         sorted_counter = sorted(counter.items(), key=lambda x: x[1])
-
+        self.sorted_counter = sorted_counter
         labels_syn = []
         self.syn_class_indices = {}
         # syn_class_indices:合成图中class对应的index范围，闭区间
@@ -123,14 +135,14 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--reduction_rate', type=float, default=0.005)
+    parser.add_argument('--reduction_rate', type=float, default=0.0005)
     parser.add_argument('--keep_ratio', type=float, default=1.0)  # buzhid
     parser.add_argument('--inner', type=int, default=0)
     parser.add_argument('--outer', type=int, default=20)
     parser.add_argument('--epochs', type=int, default=30)
     parser.add_argument('--seed', type=int, default=15, help='Random seed.')
     parser.add_argument('--num_gpus', type=int, default=2, help='num_gpus')
-    parser.add_argument('--dataset', type=str, default='ogbn-arxiv')
+    parser.add_argument('--dataset', type=str, default='ogb-product')
     parser.add_argument('--ip_config', type=str, default='ip_config.txt')
     parser.add_argument('--nlayers', type=int, default=3)
     parser.add_argument('--hidden', type=int, default=256)
@@ -139,7 +151,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr_model', type=float, default=0.01)
     parser.add_argument('--weight_decay', type=float, default=0.0)
     parser.add_argument('--dropout', type=float, default=0.0)
-    parser.add_argument('--n_class', type=int, default=40)
+    parser.add_argument('--n_class', type=int, default=47)
     parser.add_argument(
         "--local-rank", type=int, default=0, help="get rank of the process"
     )
@@ -162,7 +174,7 @@ if __name__ == '__main__':
     parser.add_argument("--fan_out", type=str, default="10,25,10")
     parser.add_argument("--batch_size", type=int, default=1024)
     parser.add_argument("--batch_size_eval", type=int, default=100000)
-    parser.add_argument("--log_every", type=int, default=10)
+    parser.add_argument("--log_every", type=int, default=1)
     parser.add_argument("--eval_every", type=int, default=5)
     args = parser.parse_args()
     """data = DGL2Data("data/ogbn-arxiv.json", 0, args=args)"""
@@ -170,7 +182,7 @@ if __name__ == '__main__':
     from train_dgc_tranductive import condense
     from models.dist_gcn import DistGCN
     from ipc import write_model
-    model = DistGCN(128, args.hidden, 40, nlayers=3,
+    model = DistGCN(100, args.hidden, 47, nlayers=3,
                     dropout=args.dropout)
     write_model(model)
-    condense(args, 0)
+    condense(args, 1)

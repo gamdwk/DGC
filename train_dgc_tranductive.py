@@ -33,7 +33,9 @@ def evaluate(input_dict):
 
 def train(x, args):
     init(args)
+
     g = DistGraph(args.dataset, part_config="data/{}.json".format(args.dataset))
+    from sample import pull_handler
     if args.num_gpus == -1:
         device = torch.device("cpu")
         dcdm = DistGCDM(g, args, evaluate, device=device)
@@ -43,19 +45,19 @@ def train(x, args):
         dcdm = DistGCDM(g, args, evaluate, device=device, dev_id=dev_id)  # Evaluator(name=args.dataset))
     import torch.multiprocessing as mp
     rank = g.rank()
-    #process = mp.Process(target=condense, args=(args, rank), daemon=True)
+    # process = mp.Process(target=condense, args=(args, rank), daemon=True)
     # mp.spawn(condense, args=(args,), daemon=True)
-    #process.start()
-    data = DGL2Data('data/{}.json'.format(args.dataset), rank, args)
-    if args.num_gpus == -1:
+    # process.start()
+    # data = DGL2Data('data/{}.json'.format(args.dataset), rank, args)
+    """if args.num_gpus == -1:
         device = torch.device("cpu")
         condenser = Condenser(data, device, args)
     else:
         dev_id = data.rank % args.num_gpus
         device = torch.device("cuda:" + str(dev_id))
-        condenser = Condenser(data, device, args, dev_id)
+        condenser = Condenser(data, device, args, dev_id)"""
     dcdm.train()
-    #process.join()
+    # process.join()
     # condense(args, rank)
 
 
@@ -68,7 +70,12 @@ def condense(args, rank):
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)
+
+    #with open(f"condense_{rank}.txt", "w") as f:
+        # print(2)
+
     data = DGL2Data('data/{}.json'.format(args.dataset), rank, args)
+    # print(-2)
     if args.num_gpus == -1:
         device = torch.device("cpu")
         condenser = Condenser(data, device, args)
@@ -76,14 +83,11 @@ def condense(args, rank):
         dev_id = data.rank % args.num_gpus
         device = torch.device("cuda:" + str(dev_id))
         condenser = Condenser(data, device, args, dev_id)
-    with open(f"condense_{data.rank}.txt", "w") as f:
-        sys.stdout = f
-        sys.stderr = f
-        condenser.condense()
-
+    # print(3)
+    condenser.condense()
 
 def main(args):
-    print(args.local_rank)
+    print(args)
     # torch.cuda.set_device(args.gpu_id)
 
     # random seed setting
@@ -94,7 +98,10 @@ def main(args):
     # mp.spawn()
     # ma = mp.Manager()
     # ma.start()
-    train(1, args)
+    if args.act == "train":
+        train(1, args)
+    else:
+        condense(args, rank=args.rank)
     # mp.spawn(train, args=(args,))
 
 
@@ -104,10 +111,11 @@ if __name__ == '__main__':
     parser.add_argument('--keep_ratio', type=float, default=1.0)  # buzhid
     parser.add_argument('--inner', type=int, default=0)
     parser.add_argument('--outer', type=int, default=20)
-    parser.add_argument('--epochs', type=int, default=30)
+    parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--seed', type=int, default=15, help='Random seed.')
     parser.add_argument('--num_gpus', type=int, default=-1, help='num_gpus')
     parser.add_argument('--dataset', type=str, default='ogbn-arxiv')
+    #parser.add_argument('--dataset', type=str, default='ogb-product')
     parser.add_argument('--ip_config', type=str, default='ip_config.txt')
     parser.add_argument('--nlayers', type=int, default=3)
     parser.add_argument('--hidden', type=int, default=256)
@@ -136,9 +144,12 @@ if __name__ == '__main__':
         default="socket",
         help="backend net type, 'socket' or 'tensorpipe'",
     )
-    parser.add_argument("--fan_out", type=str, default="10,25,10")
+    parser.add_argument("--fan_out", type=str, default="10,15,10")
     parser.add_argument("--batch_size", type=int, default=1024)
     parser.add_argument("--batch_size_eval", type=int, default=100000)
     parser.add_argument("--log_every", type=int, default=10)
     parser.add_argument("--eval_every", type=int, default=5)
+    parser.add_argument("--act", type=str, default="train")
+    parser.add_argument("--rank", type=int, default=0)  # 压缩的时候一定要传入
+    parser.add_argument("--condense", type=int, default=1)  # 不使用压缩的时候是0
     main(parser.parse_args())

@@ -1,9 +1,14 @@
 import torch
 import torch.nn as nn
 from sklearn.metrics.pairwise import rbf_kernel
+import numpy as np
 
 
-def compute_mmd(samples_p, samples_q, sigma=1.0):
+def compute_mmd(samples_p, samples_q, sigma=1.0, device='cpu'):
+    # samples_p = samples_p.to('cpu')
+    # samples_q = samples_q.to('cpu')
+    # print(samples_p)
+    # print(samples_q)
     n_p = samples_p.size(0)
     n_q = samples_q.size(0)
 
@@ -15,7 +20,7 @@ def compute_mmd(samples_p, samples_q, sigma=1.0):
     pairwise_distances_q = torch.cdist(samples_q, samples_q, p=2)
     K_q = torch.exp(-pairwise_distances_q ** 2 / (2 * sigma ** 2))
 
-    # 计算混合核矩阵 K_mix
+    # 计算混合核矩阵 K_mix,内存消耗很大
     pairwise_distances_mix = torch.cdist(samples_p, samples_q, p=2)
     K_mix = torch.exp(-pairwise_distances_mix ** 2 / (2 * sigma ** 2))
 
@@ -80,32 +85,48 @@ def compute_mmd3(dist1, dist2, sigma=1.0, device='cpu'):
         torch.Tensor: MMD的值
     """
     # 将样本移动到指定的设备上
-    dist1 = dist1.to(device)
-    dist2 = dist2.to(device)
+    # dist1 = dist1.cpu()
+    # dist2 = dist2.cpu()
 
     # 计算样本之间的核矩阵
-    K11 = torch.tensor(rbf_kernel(dist1, dist1, gamma=1.0 / (2 * sigma ** 2)), device=device)
-    K22 = torch.tensor(rbf_kernel(dist2, dist2, gamma=1.0 / (2 * sigma ** 2)), device=device)
-    K12 = torch.tensor(rbf_kernel(dist1, dist2, gamma=1.0 / (2 * sigma ** 2)), device=device)
-
-    # 计算 MMD 的值
     N = dist1.size(0)
     M = dist2.size(0)
+    #print("mmd:N:{},M:{}".format(N, M))
+    dist1 = dist1.cpu().detach().numpy()
+    dist2 = dist2.cpu().detach().numpy()
+    if N > 20000:
+        dist1 = random_sample(dist1, N, 20000)
+    K11 = torch.tensor(rbf_kernel(dist1, dist1, gamma=1.0 / (2 * sigma ** 2))).to(device)
+    K22 = torch.tensor(rbf_kernel(dist2, dist2, gamma=1.0 / (2 * sigma ** 2))).to(device)
+    K12 = torch.tensor(rbf_kernel(dist1, dist2, gamma=1.0 / (2 * sigma ** 2))).to(device)
+
+    # 计算 MMD 的值
+
     mmd = (K11.sum() / (N * (N - 1))) + (K22.sum() / (M * (M - 1))) - 2 * (K12.sum() / (N * M))
+    mmd = mmd.requires_grad_(True)
     return mmd
+
+
+def random_sample(dist, n, sample_sizes):
+    idx = np.random.randint(0, n, size=sample_sizes)
+    return dist[idx]
 
 
 if __name__ == '__main__':
     # 示例用法
     # 创建样本张量
+
     samples_p = torch.randn(100, 10)  # P 分布样本，大小为 100x10
     samples_q = torch.randn(200, 10)  # Q 分布样本，大小为 200x10
+    samples_p = samples_p.numpy()
+    random_sample(samples_p, 100, 10)
+
     sigma = 1.0  # 高斯核函数的带宽参数
 
     # 计算 MMD
     mmd_value = compute_mmd(samples_p, samples_q, sigma)
     mmd_value2 = compute_mmd2(samples_p, samples_q)
-    mmd_value3 = compute_mmd3(samples_p, samples_q)
+    # mmd_value3 = compute_mmd3(samples_p, samples_q)
     print("MMD value:", mmd_value.item())
     x_known = torch.tensor([[1.0, 2.0], [2.0, 3.0], [3.0, 4.0]])
     y_known = torch.tensor([[2.0, 3.0]])
@@ -114,4 +135,4 @@ if __name__ == '__main__':
     # 计算MMD
     computed_mmd = compute_mmd(x_known, y_known)
     computed_mmd2 = compute_mmd2(x_known, y_known)
-    computed_mmd3 = compute_mmd3(x_known, y_known)
+    # computed_mmd3 = compute_mmd3(x_known, y_known)

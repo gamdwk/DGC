@@ -12,7 +12,8 @@ import tqdm
 import dgl
 import dgl.nn.pytorch as dglnn
 from torch.distributed.elastic.multiprocessing.errors import record
-from nic import get_network_counters,compute_nic,create_start_nic
+from nic import get_network_counters, compute_nic, create_start_nic
+
 
 def load_subtensor(g, seeds, input_nodes, device, load_feat=True):
     """
@@ -168,15 +169,15 @@ def run(args, device, data):
     from models.dist_gcn import DistGCN
     model = DistGCN(in_feats, args.num_hidden,
                     n_classes,
-                    args.num_layers)
-    """model = DistSAGE(
+                    args.num_layers, dropout=args.dropout)
+    model = DistSAGE(
         in_feats,
         args.num_hidden,
         n_classes,
         args.num_layers,
         F.relu,
         args.dropout,
-    )"""
+    )
     model = model.to(device)
     if not args.standalone:
         if args.num_gpus == -1:
@@ -194,7 +195,7 @@ def run(args, device, data):
     epoch = 0
     net_inter = "eth0"
     for epoch in range(args.num_epochs):
-        #tic = time.time()
+        # tic = time.time()
         start_counters, tic = create_start_nic(net_inter)
         sample_time = 0
         forward_time = 0
@@ -277,11 +278,11 @@ def run(args, device, data):
                 num_inputs,
             )
         )
-        #epoch += 1
+        # epoch += 1
 
         if epoch % args.eval_every == 0 and epoch != 0:
             start = time.time()
-            compute_nic(start_counters,tic,net_inter)
+            compute_nic(start_counters, tic, net_inter)
             val_acc, test_acc = evaluate(
                 model if args.standalone else model.module,
                 g,
@@ -301,6 +302,12 @@ def run(args, device, data):
 
 
 def main(args):
+    import random
+    import torch
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed(args.seed)
     print(socket.gethostname(), "Initializing DGL dist")
     dgl.distributed.initialize(args.ip_config, net_type=args.net_type)
     if not args.standalone:
@@ -402,7 +409,8 @@ if __name__ == "__main__":
         default=-1,
         help="the number of GPU device. Use -1 for CPU training",
     )
-    parser.add_argument("--num_epochs", type=int, default=20)
+    parser.add_argument('--seed', type=int, default=15, help='Random seed.')
+    parser.add_argument("--num_epochs", type=int, default=100)
     parser.add_argument("--num_hidden", type=int, default=256)
     parser.add_argument("--num_layers", type=int, default=3)
     parser.add_argument("--fan_out", type=str, default="10,25,10")

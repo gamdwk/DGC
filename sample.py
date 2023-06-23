@@ -44,44 +44,53 @@ class SynFeatRequest(Request):
     def process_request(self, server_state):
         # print(100)
         # print(self.__getstate__())
-        import time
-        t1 = time.time()
+        # import time
+        # t1 = time.time()
         kv_store = server_state.kv_store
         labels = self.labels
         labels_dict = {}
-
+        # t6 = time.time()
         syn_label_indices = read_syn_label_indices()
+        print("rank:{},{}".format(kv_store.server_id, syn_label_indices))
+        # t9 = time.time()
         syn_feat = read_syn_feat()
-
+        # t7 = time.time()
         num_all = 0
 
         d = syn_feat.shape[1]
 
         c = Counter(labels.tolist())
-
+        # t8 = time.time()
+        # print(f"读ipc{t9-t6},{t7-t6},{t8-t7}")
         syn_ids = {}
         # print(c)
+        # t2 = time.time()
         for i, (label, num) in enumerate(c.items()):
             num = num * self.rate
 
             num = int(num) if num > 1 else 1
             labels_dict[label] = (num_all, num_all + num)
             num_all += num
+            #print("rank:{}".format(kv_store.server_id))
             syn_idx = np.random.randint(syn_label_indices[label][0], syn_label_indices[label][1], num)
             syn_ids[label] = syn_idx
+        # t3 = time.time()
         # print(labels_dict)
         data = torch.zeros((num_all, d))
         for i, (label, num) in enumerate(c.items()):
             syn_idx = syn_ids[label]
             data[labels_dict[label][0]:labels_dict[label][1]] = syn_feat[syn_idx]
+        # t4 = time.time()
         local_to_full = torch.zeros((len(self.labels),), dtype=torch.int64)
         # print(local_to_full)
         for i, label in enumerate(labels.tolist()):
             local_to_full[i] = torch.tensor(np.random.randint(labels_dict[label][0], labels_dict[label][1], 1),
                                             dtype=torch.int64)
         # print(local_to_full)
+        # t5 = time.time()
+        # print(f"t:循环1:{t3-t2},2:{t4-t3},3:{t5-t4},长度{len(labels)}动态{len(data)}")
         res = SynFeatResponse(kv_store.server_id, data, local_to_full)
-        print("返回请求", time.time() - t1)
+        # print("返回请求", time.time() - t1)
         # print(res)
         return res
 
@@ -116,7 +125,7 @@ def get_features_remote_syn(g: DistGraph, id_tensor, rate):
     labels = g.ndata['labels']
     part_policy = labels.part_policy
     # labels_name = labels._name
-    client = get_kvstore()
+    # client = get_kvstore()
 
     pb = g.get_partition_book()
 
@@ -139,11 +148,13 @@ def get_features_remote_syn(g: DistGraph, id_tensor, rate):
         partial_id = id_tensor[start:end]
         """print("machine_idx{},part_id{},partial_id{}".format(machine_idx, part_id, partial_id))
         print("in")"""
+        # print(f"机器{machine_idx}获取{len(partial_id)}个节点，总共{len(id_tensor)}")
         if machine_idx == part_id:  # local pull
             # Note that DO NOT pull local data right now because we can overlap
             # communication-local_pull here
             # local_id = part_policy.to_local(partial_id)
-            local_id = features.part_policy.to_local(partial_id)
+            # local_id = features.part_policy.to_local(partial_id)
+            local_id = partial_id
             """print("local_id:", local_id)
             print("partial_id", partial_id)
             a = g.local_partition.ndata[dgl.NID]
@@ -161,6 +172,7 @@ def get_features_remote_syn(g: DistGraph, id_tensor, rate):
         else:  # pull data from remote server
             # print(2)
             idx_labels = labels[partial_id]
+            # print(partial_id[torch.nonzero(idx_labels == 45)])
             # print(idx_labels)
             request = SynFeatRequest(idx_labels, rate)
             # print(request)
@@ -210,6 +222,11 @@ def init_remote():
     MY_SYN_PULL = 61120
     rpc.register_service(MY_SYN_PULL, SynFeatRequest,
                          SynFeatResponse)
+
+
+def init_g_features(g):
+    name = g.ndata["features"]._name
+    get_kvstore().register_pull_handler(name, pull_handler)
 
 
 from dgl.dataloading import DistNodeDataLoader, DataLoader
