@@ -167,9 +167,9 @@ def run(args, device, data):
     )
     # Define model and optimizer
     from models.dist_gcn import DistGCN
-    model = DistGCN(in_feats, args.num_hidden,
-                    n_classes,
-                    args.num_layers, dropout=args.dropout)
+    """model = DistGCN(in_feats, args.num_hidden,
+                    nclass,
+                    args.num_layers, dropout=args.dropout)"""
     model = DistSAGE(
         in_feats,
         args.num_hidden,
@@ -371,7 +371,7 @@ def main(args):
     else:
         dev_id = g.rank() % args.num_gpus
         device = th.device("cuda:" + str(dev_id))
-    n_classes = args.n_classes
+    n_classes = args.nclass
     if n_classes == 0:
         labels = g.ndata["labels"][np.arange(g.num_nodes())]
         n_classes = len(th.unique(labels[th.logical_not(th.isnan(labels))]))
@@ -395,7 +395,7 @@ if __name__ == "__main__":
         "--part_config", type=str, help="The path to the partition config file"
     )
     parser.add_argument(
-        "--n_classes", type=int, default=0, help="the number of classes"
+        "--nclass", type=int, default=0, help="the number of classes"
     )
     parser.add_argument(
         "--backend",

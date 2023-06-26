@@ -51,7 +51,7 @@ class SynFeatRequest(Request):
         labels_dict = {}
         # t6 = time.time()
         syn_label_indices = read_syn_label_indices()
-        print("rank:{},{}".format(kv_store.server_id, syn_label_indices))
+        #print("rank:{},{}".format(kv_store.server_id, syn_label_indices))
         # t9 = time.time()
         syn_feat = read_syn_feat()
         # t7 = time.time()
@@ -71,7 +71,7 @@ class SynFeatRequest(Request):
             num = int(num) if num > 1 else 1
             labels_dict[label] = (num_all, num_all + num)
             num_all += num
-            #print("rank:{}".format(kv_store.server_id))
+            # print("rank:{}".format(kv_store.server_id))
             syn_idx = np.random.randint(syn_label_indices[label][0], syn_label_indices[label][1], num)
             syn_ids[label] = syn_idx
         # t3 = time.time()
@@ -118,6 +118,7 @@ def take_id(elem):
 
 def get_features_remote_syn(g: DistGraph, id_tensor, rate):
     # print(1)
+    # torch.set_printoptions(threshold=np.inf,profile="full")
     id_tensor = dgl.utils.toindex(id_tensor)
     id_tensor = id_tensor.tousertensor()
     features = g.ndata['features']
@@ -131,10 +132,16 @@ def get_features_remote_syn(g: DistGraph, id_tensor, rate):
 
     # g.get_node_partition_policy(ntype=g.ntypes[0])
     part_id = pb.partid
+    # print(part_policy.to_partid(1288835))
+    # print(pb.nid2partid(1288835))
+    #torch.save(id_tensor, f"id_tensor_{part_id}.pt")
     machine_id = part_policy.to_partid(id_tensor)
+    #torch.save(machine_id, f"machine_id_{part_id}.pt")
     sorted_id = F.tensor(np.argsort(F.asnumpy(machine_id)))
+    id_tensor = id_tensor[sorted_id]
     back_sorted_id = F.tensor(np.argsort(F.asnumpy(sorted_id)))
     machine, count = np.unique(F.asnumpy(machine_id), return_counts=True)
+    #torch.save(machine, f"machine_{part_id}.pt")
     start = 0
     pull_count = 0
     local_id = None
@@ -149,6 +156,8 @@ def get_features_remote_syn(g: DistGraph, id_tensor, rate):
         """print("machine_idx{},part_id{},partial_id{}".format(machine_idx, part_id, partial_id))
         print("in")"""
         # print(f"机器{machine_idx}获取{len(partial_id)}个节点，总共{len(id_tensor)}")
+        #print(part_id, machine_idx, partial_id)
+        #torch.save(partial_id, f"{part_id}get{machine_idx}.pt")
         if machine_idx == part_id:  # local pull
             # Note that DO NOT pull local data right now because we can overlap
             # communication-local_pull here
@@ -171,8 +180,18 @@ def get_features_remote_syn(g: DistGraph, id_tensor, rate):
             print(features.local_partition[local_id])"""
         else:  # pull data from remote server
             # print(2)
+
+            #print(partial_id)
+            #torch.save(partial_id, f"idx{part_id}.pt")
             idx_labels = labels[partial_id]
+            #print(idx_labels)
+            #torch.save(idx_labels, f"labels{part_id}.pt")
             # print(partial_id[torch.nonzero(idx_labels == 45)])
+            x = partial_id[torch.nonzero(idx_labels == 45)]
+
+            #print(x)
+            #if x.shape[0] > 0:
+            #    print(part_policy.to_partid(x[0]))
             # print(idx_labels)
             request = SynFeatRequest(idx_labels, rate)
             # print(request)

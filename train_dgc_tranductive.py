@@ -107,6 +107,7 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('--model', type=str, default="GCN")
     parser.add_argument('--reduction_rate', type=float, default=0.005)
     parser.add_argument('--keep_ratio', type=float, default=1.0)  # buzhid
     parser.add_argument('--inner', type=int, default=0)
@@ -115,7 +116,7 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=15, help='Random seed.')
     parser.add_argument('--num_gpus', type=int, default=-1, help='num_gpus')
     parser.add_argument('--dataset', type=str, default='ogbn-arxiv')
-    #parser.add_argument('--dataset', type=str, default='ogb-product')
+    # parser.add_argument('--dataset', type=str, default='ogb-product')
     parser.add_argument('--ip_config', type=str, default='ip_config.txt')
     parser.add_argument('--nlayers', type=int, default=3)
     parser.add_argument('--hidden', type=int, default=256)

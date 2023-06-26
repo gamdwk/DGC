@@ -70,8 +70,23 @@ class DistGCDM(object):
                                          store_ids=False)
         self.local_g.ndata['labels'] = g.ndata['labels'][self.local_g.ndata[dgl.NID]]
         # 训练
-        self.model = DistGCN(g.ndata["features"].shape[1], args.hidden, self.n_class, nlayers=args.nlayers,
-                             dropout=args.dropout)
+
+        if args.model == "GCN":
+            self.model = DistGCN(g.ndata["features"].shape[1], args.hidden, self.n_class,
+                                 nlayers=args.nlayers,
+                                 dropout=args.dropout, device=self.device)
+        elif args.model == "GraphSage":
+            from models.dist_sage import DistSAGE
+            import torch.nn.functional as F
+            self.model = DistSAGE(
+                g.ndata["features"].shape[1],
+                args.hidden,
+                self.n_class,
+                args.nlayers,
+                F.relu,
+                args.dropout,
+                self.device
+            )
         write_model(self.model)
         self.optimizer = Adam(self.model.parameters(), lr=args.lr_model, weight_decay=args.weight_decay)
         self.cross_loss = nn.CrossEntropyLoss()
