@@ -9,7 +9,7 @@ import torch as th
 import dgl
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ""))
-from load_graph import load_ogb, load_reddit
+from load_graph import load_ogb, load_reddit, load_amazon
 
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser("Partition builtin graphs")
@@ -68,7 +68,9 @@ if __name__ == "__main__":
         g, _ = load_ogb("ogbn-products")
     elif args.dataset == "ogbn-arxiv":
         g, _ = load_ogb("ogbn-arxiv")
-    g = dgl.add_self_loop(g)
+    elif args.dataset == "amazon":
+        g = load_amazon()
+    # g = dgl.add_self_loop(g)
     print(
         "load {} takes {:.3f} seconds".format(args.dataset, time.time() - start)
     )

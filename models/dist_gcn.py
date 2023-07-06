@@ -10,7 +10,7 @@ from dgl.nn.pytorch import GraphConv
 
 class DistGCN(nn.Module):
 
-    def __init__(self, nfeat, nhid, nclass, nlayers=2, dropout=0.5, lr=0.01, weight_decay=5e-4,
+    def __init__(self, nfeat, nhid, nclass, nlayers=3, dropout=0.5, lr=0.01, weight_decay=5e-4,
                  with_relu=True, with_bias=True, with_bn=False, device=None):
 
         super(DistGCN, self).__init__()
@@ -61,9 +61,9 @@ class DistGCN(nn.Module):
                 x = self.bns[ix](x) if self.with_bn else x
                 if self.with_relu:
                     x = self.relu(x)
-                x = self.dropout(x, )
+                x = self.dropout(x)
         if self.multi_label:
-            return torch.sigmoid(x)
+            return self.sigmoid(x)
         else:
             return F.log_softmax(x, dim=1)
 

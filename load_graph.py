@@ -47,6 +47,10 @@ def load_ogb(name, root="dataset"):
     return graph, num_labels
 
 
+def load_amazon(root="dataset"):
+    return dgl.load_graphs(f"{root}/amazon")[0][0]
+ 
+
 def inductive_split(g):
     """Split the graph into training graph, validation graph, and test graph by training
     and validation masks.  Suitable for inductive models."""

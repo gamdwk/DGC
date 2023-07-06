@@ -28,7 +28,10 @@ class DistSAGE(nn.Module):
     def forward(self, x, blocks):
         h = x
         for i, (layer, block) in enumerate(zip(self.layers, blocks)):
-            h = layer(block, h)
+            h_dst = h[:block.number_of_dst_nodes()]
+            #print(h.shape)
+            #print(h_dst.shape)
+            h = layer(block, (h, h_dst))
             if i != len(self.layers) - 1:
                 h = self.activation(h)
                 h = self.dropout(h)
@@ -63,11 +66,11 @@ class DistSAGE(nn.Module):
         import numpy as np
         import torch as th
         import tqdm
-        nodes = dgl.distributed.node_split(
+        """nodes = dgl.distributed.node_split(
             np.arange(g.num_nodes()),
             g.get_partition_book(),
             force_even=True,
-        )
+        )"""
         y = dgl.distributed.DistTensor(
             (g.num_nodes(), self.n_hidden),
             th.float32,
@@ -86,19 +89,20 @@ class DistSAGE(nn.Module):
                 f"|V|={g.num_nodes()}, eval batch size: {batch_size}"
             )
 
-            sampler = dgl.dataloading.NeighborSampler([-1])
+            # sampler = dgl.dataloading.NeighborSampler([-1])
+            sampler = dgl.dataloading.MultiLayerFullNeighborSampler(1)
             dataloader = dgl.dataloading.DistNodeDataLoader(
                 g,
-                nodes,
+                th.arange(g.num_nodes()),
                 sampler,
                 batch_size=batch_size,
                 num_workers=0,
-                shuffle=False,
-                drop_last=False,
+                shuffle=True,
+                drop_last=False
             )
 
             for input_nodes, output_nodes, blocks in tqdm.tqdm(dataloader):
-                block = blocks[0].to(device)
+                block = blocks[0].int().to(device)
                 h = x[input_nodes].to(device)
                 h_dst = h[: block.number_of_dst_nodes()]
                 h = layer(block, (h, h_dst))

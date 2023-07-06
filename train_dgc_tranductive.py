@@ -108,24 +108,26 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, default="GCN")
-    parser.add_argument('--reduction_rate', type=float, default=0.005)
+    parser.add_argument('--reduction_rate', type=float, default=0.0005)
     parser.add_argument('--keep_ratio', type=float, default=1.0)  # buzhid
     parser.add_argument('--inner', type=int, default=0)
     parser.add_argument('--outer', type=int, default=20)
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--seed', type=int, default=15, help='Random seed.')
     parser.add_argument('--num_gpus', type=int, default=-1, help='num_gpus')
-    parser.add_argument('--dataset', type=str, default='ogbn-arxiv')
-    # parser.add_argument('--dataset', type=str, default='ogb-product')
+
     parser.add_argument('--ip_config', type=str, default='ip_config.txt')
     parser.add_argument('--nlayers', type=int, default=3)
     parser.add_argument('--hidden', type=int, default=256)
     parser.add_argument('--lr_adj', type=float, default=0.01)
     parser.add_argument('--lr_feat', type=float, default=0.01)
-    parser.add_argument('--lr_model', type=float, default=0.01)
+    parser.add_argument('--lr_model', type=float, default=0.03)
     parser.add_argument('--weight_decay', type=float, default=0.0)
-    parser.add_argument('--dropout', type=float, default=0.0)
-    parser.add_argument('--n_class', type=int, default=40)
+    parser.add_argument('--dropout', type=float, default=0.5)
+    # parser.add_argument('--dataset', type=str, default='ogbn-arxiv')
+    parser.add_argument('--dataset', type=str, default='ogb-product')
+    # parser.add_argument('--dataset', type=str, default='amazon')
+    parser.add_argument('--n_class', type=int, default=47)
     parser.add_argument(
         "--local-rank", type=int, default=0, help="get rank of the process"
     )
@@ -145,12 +147,19 @@ if __name__ == '__main__':
         default="socket",
         help="backend net type, 'socket' or 'tensorpipe'",
     )
-    parser.add_argument("--fan_out", type=str, default="10,15,10")
-    parser.add_argument("--batch_size", type=int, default=1024)
-    parser.add_argument("--batch_size_eval", type=int, default=100000)
+    parser.add_argument("--fan_out", type=str, default="5,10,15")
+    parser.add_argument("--batch_size", type=int, default=1000)
+    parser.add_argument("--batch_size_eval", type=int, default=10000)
     parser.add_argument("--log_every", type=int, default=10)
-    parser.add_argument("--eval_every", type=int, default=5)
+    parser.add_argument("--eval_every", type=int, default=1)
     parser.add_argument("--act", type=str, default="train")
     parser.add_argument("--rank", type=int, default=0)  # 压缩的时候一定要传入
     parser.add_argument("--condense", type=int, default=1)  # 不使用压缩的时候是0
+    parser.add_argument('--sampler', type=str, default="random")
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=4,
+        help="Number of sampling processes. Use 0 for no extra process.",
+    )
     main(parser.parse_args())

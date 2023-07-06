@@ -193,7 +193,10 @@ def run(args, device, data):
     # Training loop
     iter_tput = []
     epoch = 0
-    net_inter = "eth0"
+    if args.standalone:
+        net_inter = "eno2"
+    else:
+        net_inter = "eth0"
     for epoch in range(args.num_epochs):
         # tic = time.time()
         start_counters, tic = create_start_nic(net_inter)

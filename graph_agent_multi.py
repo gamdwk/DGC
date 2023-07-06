@@ -4,7 +4,6 @@ import torch.nn as nn
 from dgl.distributed import DistGraph
 from torch.optim import Adam
 
-import data
 from ipc import write_syn_feat, write_syn_label_indices, read_model, write_model, del_model, del_syn
 from mmd import compute_mmd
 from models.dist_gcn import DistGCN
@@ -28,6 +27,7 @@ def load_subtensor(g, seeds, input_nodes, device, rate, load_labels=True):
     p = pdb.Pdb()
     p.set_trace()"""
     batch_inputs = get_features_remote_syn(g, input_nodes, rate)
+    batch_inputs = batch_inputs.to(device)
     # batch_inputs = g.ndata["features"][input_nodes].to(device)
     batch_labels = g.ndata["labels"][seeds].to(device) if load_labels else None
     return batch_inputs, batch_labels
@@ -64,7 +64,7 @@ class DistGCDM(object):
         self.device = device
         self.dev_id = dev_id
         self.device_str = str(self.device)
-
+        g.local_partition.create_formats_()
         self.local_g = dgl.node_subgraph(g.local_partition,
                                          g.local_partition.ndata['inner_node'].bool(),
                                          store_ids=False)
@@ -88,11 +88,15 @@ class DistGCDM(object):
                 self.device
             )
         write_model(self.model)
-        self.optimizer = Adam(self.model.parameters(), lr=args.lr_model, weight_decay=args.weight_decay)
+        self.optimizer = None
         self.cross_loss = nn.CrossEntropyLoss()
 
         self.evaluator = evaluator
-        self.net_interface = "eth0"
+        if args.standalone:
+            self.net_interface = "eno2"
+        else:
+            self.net_interface = "eth0"
+        # self.net_interface = "eth0"
         atexit.register(del_model)
         from ipc import wait_for_syn
         # wait_for_syn()
@@ -105,13 +109,18 @@ class DistGCDM(object):
                                                         device_ids=[self.dev_id],
                                                         output_device=self.device)
 
+
         args = self.args
         model = model.to(self.device)
-        model.train()
-        self.optimizer.zero_grad()
-        sampler = dgl.dataloading.NeighborSampler(
-            [int(fanout) for fanout in args.fan_out.split(",")]
-        )
+        self.optimizer = Adam(model.parameters(), lr=args.lr_model, weight_decay=args.weight_decay)
+        fan = [int(fanout) for fanout in args.fan_out.split(",")]
+
+        if args.sampler == "fast_gcn":
+            from models.fast_gcn import LayerSampler
+            sampler = LayerSampler(fan)
+        else:
+            sampler = dgl.dataloading.MultiLayerNeighborSampler(fan)
+
         dataloader = dgl.dataloading.DistNodeDataLoader(
             self.g,
             self.train_nid,
@@ -119,10 +128,11 @@ class DistGCDM(object):
             batch_size=args.batch_size,
             shuffle=shuffle,
             drop_last=False,
+            num_workers=args.num_workers,
         )
         iter_tput = []
         step = 0
-        init_g_features(self.g)
+        # init_g_features(self.g)
         for epoch in range(self.args.epochs + 1):
             start_counters, start_time = create_start_nic(self.net_interface)
 
@@ -164,7 +174,7 @@ class DistGCDM(object):
                     # load_time = t2-t1
                     # raw_load_time = t3-t2
                     # print(f"load_time:{load_time},raw_load_time{raw_load_time}")
-                    blocks = [block.to(self.device) for block in blocks]
+                    blocks = [blk.int().to(self.device) for blk in blocks]
                     batch_labels = batch_labels.long()
 
                     num_seeds += len(blocks[-1].dstdata[dgl.NID])
@@ -239,9 +249,9 @@ class DistGCDM(object):
                         update_time,
                         num_seeds,
                         num_inputs,
-                        float(num_inputs)/float(load_time),
+                        float(num_inputs) / float(load_time),
                         elapsed_time,
-                        rx_speed, tx_speed, (rx_speed+tx_speed)*elapsed_time
+                        rx_speed, tx_speed, (rx_speed + tx_speed) * elapsed_time
                     )
                 )
                 if epoch % args.eval_every == 0 and epoch != 0:
@@ -288,8 +298,8 @@ class DistGCDM(object):
 
     def evaluate(self, model, g, inputs, labels, val_nid, test_nid, batch_size, device):
         model.eval()
-        device = "cpu"
-        model = model.to("cpu")
+        # device = "cpu"
+        # model = model.to("cpu")
         with torch.no_grad():
             pred = model.inference(g, inputs, batch_size, device)
         model.train()
@@ -304,7 +314,7 @@ class DistGCDM(object):
 
 
 class Condenser(object):
-    def __init__(self, syn_data, device, args, dev_id=None):
+    def __init__(self, syn_data, device, args, dev_id=None, full_graph=True):
         self.n_class = syn_data.n_class
         self.args = args
         self.device = device
@@ -328,7 +338,7 @@ class Condenser(object):
         model = read_model()
         model = model.to(self.device)
         pge = self.pge.to(self.device)
-        #pge = self.pge
+        # pge = self.pge
         args = self.args
         loss_fn = self.loss_fn
         sorted_counter = self.data.sorted_counter
@@ -352,7 +362,7 @@ class Condenser(object):
                 num_inputs = 0
                 step = 0
                 # loss = torch.tensor(0.0).to(self.device)
-                # 按类训练op
+                # 按类训练
                 for c, num in sorted_counter:
                     # input_nodes:计算的数据（包含邻居），output_nodes：不含邻居，需要更新的数据，都是全局节点
                     # blocks：包含邻居的子图
