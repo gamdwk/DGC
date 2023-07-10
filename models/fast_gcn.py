@@ -14,10 +14,10 @@ import dgl
 from dgl.utils import toindex
 from dgl.dataloading.labor_sampler import LaborSampler
 from dgl.dataloading import NeighborSampler
+from dgl.distributed.graph_services import _distributed_access
 from dgl.sampling.labor import sample_labors as local_sample_labors
 
-
-def sample_labors(g, nodes, fanout, edge_dir="in", prob=None,
+"""def sample_labors(g, nodes, fanout, edge_dir="in", prob=None,
                   importance_sampling=0, random_seed=None,
                   exclude_edges=None, output_device=None):
     gpb = g.get_partition_book()
@@ -53,21 +53,19 @@ def sample_labors(g, nodes, fanout, edge_dir="in", prob=None,
         _prob = (
             [g.edata[prob].local_partition] if prob is not None else None
         )
-        return _sample_neighbors(
+        return local_sample_labors(
             local_g,
             partition_book,
             local_nids,
             fanout,
             edge_dir,
             _prob,
-            replace,
         )
 
     frontier = _distributed_access(g, nodes, issue_remote_req, local_access)
-    return frontier
+    return frontier"""
 
-
-class LayerSampler(LaborSampler):
+"""class LayerSampler(LaborSampler):
 
     def sample_blocks(self, g, seed_nodes, exclude_eids=None):
         output_nodes = seed_nodes
@@ -105,8 +103,54 @@ class LayerSampler(LaborSampler):
 
         self.set_seed()
         return seed_nodes, output_nodes, blocks
+"""
+from dgl.dataloading import BlockSampler
 
-class Sampler_FastGCN:
+
+# 慢的离谱。还是自己写
+class FastGCNSampler(BlockSampler):
+    """出于简单考虑。我们使用最简单的均匀采样。
+    fanouts应该是layer_sizes。跟邻居采样比要大很多。
+    """
+
+    def __init__(self, fanouts, edge_dir="in"):
+        super().__init__()
+        self.edge_dir = edge_dir
+        self.fanouts = fanouts
+        self.layer_sizes = fanouts
+        self.num_layer = len(self.layer_sizes)
+
+    def sample_blocks(self, g: DistGraph, seed_nodes, exclude_eids=None):
+        output_nodes = seed_nodes
+        blocks = []
+        for i, fanout in enumerate(reversed(self.fanouts)):
+            # 找到所有指向seed_nodes的边，以及对应的结点
+            # 总之在本地和远程都进行这个操作。返回后进行合并就行
+            # 由于我们保存了一层hop结点。应该没问题
+            frontier = g.sample_neighbors(seed_nodes, fanout, edge_dir=self.edge_dir)
+            if self.edge_dir == "in":
+                in_eid = frontier.in_edges(seed_nodes, form='uv')
+
+            else:
+                # out_eid
+                in_eid = frontier.out_edges(seed_nodes, form='uv')
+            if len(in_eid) > fanout:
+                removed = np.random.choice(np.array(np.arange(len(in_eid))), len(in_eid) - fanout)
+                removed_eid = in_eid[torch.tensor(removed)]
+                frontier.remove_edges(removed_eid)
+
+            # 根据概率进行采样
+            eid = frontier.edata[EID]
+            block = to_block(
+                frontier, seed_nodes, include_dst_in_src=True, src_nodes=None
+            )
+            block.edata[EID] = eid
+            seed_nodes = block.srcdata[NID]
+            blocks.insert(0, block)
+        return seed_nodes, output_nodes, blocks
+
+
+"""class Sampler_FastGCN:
     def __init__(self, pre_probs, features, adj, **kwargs):
         super().__init__(features, adj, **kwargs)
         # NOTE: uniform sampling can also has the same performance!!!!
@@ -115,14 +159,10 @@ class Sampler_FastGCN:
         self.probs = col_norm / np.sum(col_norm)
 
     def sampling(self, v):
-        """
-        Inputs:
-            v: batch nodes list
-        """
         all_support = [[]] * self.num_layers
 
         cur_out_nodes = v
-        for layer_index in range(self.num_layers-1, -1, -1):
+        for layer_index in range(self.num_layers - 1, -1, -1):
             cur_sampled, cur_support = self._one_layer_sampling(
                 cur_out_nodes, self.layer_sizes[layer_index])
             all_support[layer_index] = cur_support
@@ -150,3 +190,4 @@ class Sampler_FastGCN:
 
         support = support.dot(sp.diags(1.0 / (sampled_p1 * output_size)))
         return u_sampled, support
+"""

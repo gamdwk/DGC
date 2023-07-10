@@ -1,3 +1,5 @@
+import time
+
 from dgl.distributed.kvstore import KVServer, KVClient, PullResponse, PullRequest, default_pull_handler, get_kvstore
 from dgl.distributed.rpc import Request, Response
 import numpy as np
@@ -7,10 +9,11 @@ from dgl.distributed import rpc
 import dgl.distributed.dist_context
 from collections import Counter
 import torch
-from ipc import read_syn_feat, read_syn_label_indices
+from ipc import read_syn_feat, read_syn_label_indices, read_syn_feat_shape
 import dgl.utils
 
 
+# dgl.distributed.server_state.ServerState
 def pull_handler(target, name, id_tensor):
     """Default handler for PULL operation.
 
@@ -45,26 +48,30 @@ class SynFeatRequest(Request):
         # print(100)
         # print(self.__getstate__())
         # import time
-        # t1 = time.time()
+        t1 = time.time()
+        print(f"t1{t1}")
         kv_store = server_state.kv_store
         labels = self.labels
         labels_dict = {}
         # t6 = time.time()
-        syn_label_indices = read_syn_label_indices()
+        # syn_label_indices = read_syn_label_indices()
+        global syn_label_indices
+
         # print("rank:{},{}".format(kv_store.server_id, syn_label_indices))
         # t9 = time.time()
-        syn_feat = read_syn_feat()
-        # t7 = time.time()
+        # syn_feat = read_syn_feat((), torch.float)
+        global syn_feat
+        t7 = time.time()
         num_all = 0
 
         d = syn_feat.shape[1]
 
         c = Counter(labels.tolist())
-        # t8 = time.time()
-        # print(f"读ipc{t9-t6},{t7-t6},{t8-t7}")
+        t8 = time.time()
+        print(f"读ipc{t7 - t1},{t8 - t7}")
         syn_ids = {}
         # print(c)
-        # t2 = time.time()
+        t2 = time.time()
         for i, (label, num) in enumerate(c.items()):
             num = num * self.rate
 
@@ -74,23 +81,23 @@ class SynFeatRequest(Request):
             # print("rank:{}".format(kv_store.server_id))
             syn_idx = np.random.randint(syn_label_indices[label][0], syn_label_indices[label][1], num)
             syn_ids[label] = syn_idx
-        # t3 = time.time()
+        t3 = time.time()
         # print(labels_dict)
         data = torch.zeros((num_all, d))
         for i, (label, num) in enumerate(c.items()):
             syn_idx = syn_ids[label]
             data[labels_dict[label][0]:labels_dict[label][1]] = syn_feat[syn_idx]
-        # t4 = time.time()
+        t4 = time.time()
         local_to_full = torch.zeros((len(self.labels),), dtype=torch.int64)
         # print(local_to_full)
         for i, label in enumerate(labels.tolist()):
             local_to_full[i] = torch.tensor(np.random.randint(labels_dict[label][0], labels_dict[label][1], 1),
                                             dtype=torch.int64)
         # print(local_to_full)
-        # t5 = time.time()
-        # print(f"t:循环1:{t3-t2},2:{t4-t3},3:{t5-t4},长度{len(labels)}动态{len(data)}")
+        t5 = time.time()
+        print(f"t:循环1:{t3 - t2},2:{t4 - t3},3:{t5 - t4},长度{len(labels)}动态{len(data)}")
         res = SynFeatResponse(kv_store.server_id, data, local_to_full)
-        # print("返回请求", time.time() - t1)
+        print("返回请求", time.time() - t1)
         # print(res)
         return res
 
@@ -187,15 +194,20 @@ def get_features_remote_syn(g: DistGraph, id_tensor, rate):
             # print(idx_labels)
             # torch.save(idx_labels, f"labels{part_id}.pt")
             # print(partial_id[torch.nonzero(idx_labels == 45)])
-            x = partial_id[torch.nonzero(idx_labels == 45)]
+            # x = partial_id[torch.nonzero(idx_labels == 45)]
 
             # print(x)
             # if x.shape[0] > 0:
             #    print(part_policy.to_partid(x[0]))
             # print(idx_labels)
             request = SynFeatRequest(idx_labels, rate)
+            # request = PullRequest(features.kvstore_key, partial_id)
             # print(request)
+            t1 = time.time()
+            print(f"t1:{t1}")
             rpc.send_request_to_machine(machine_idx, request)
+            t2 = time.time()
+            print(f"t2：{t2 - t1}")
             pull_count += 1
         start += count[idx]
     # recv response
@@ -203,6 +215,7 @@ def get_features_remote_syn(g: DistGraph, id_tensor, rate):
     # wait response from remote server nodes
     for _ in range(pull_count):
         remote_response = rpc.recv_response()
+        print(time.time() - t2)
         response_list.append(remote_response)
     if local_id is not None:  # local pull
 
@@ -223,7 +236,7 @@ def get_features_remote_syn(g: DistGraph, id_tensor, rate):
         data = response.data_tensor
         s_id = response.server_id
         if s_id == part_id or isinstance(response, PullResponse):
-            assert s_id == part_id
+            # assert s_id == part_id
             # print("s_id{},part_id{}".format(s_id, part_id))
             return data
         else:
@@ -244,9 +257,15 @@ def init_remote():
 
 
 def init_g_features(g):
-    name = g.ndata["features"]._name
+    name = g.ndata["features"].kvstore_key
     get_kvstore().register_pull_handler(name, pull_handler)
 
+
+print("读取ipc")
+syn_feat_shape_tensor = read_syn_feat_shape()
+syn_feat_shape = (syn_feat_shape_tensor[0], syn_feat_shape_tensor[1])
+syn_label_indices = read_syn_label_indices()
+syn_feat = read_syn_feat(syn_feat_shape, torch.float)
 
 if __name__ == '__main__':
     init_remote()

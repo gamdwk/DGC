@@ -1,3 +1,4 @@
+# 我们的版本
 import argparse
 import random
 import time
@@ -71,8 +72,8 @@ def condense(args, rank):
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)
 
-    #with open(f"condense_{rank}.txt", "w") as f:
-        # print(2)
+    # with open(f"condense_{rank}.txt", "w") as f:
+    # print(2)
 
     data = DGL2Data('data/{}.json'.format(args.dataset), rank, args)
     # print(-2)
@@ -85,6 +86,7 @@ def condense(args, rank):
         condenser = Condenser(data, device, args, dev_id)
     # print(3)
     condenser.condense()
+
 
 def main(args):
     print(args)
@@ -121,7 +123,7 @@ if __name__ == '__main__':
     parser.add_argument('--hidden', type=int, default=256)
     parser.add_argument('--lr_adj', type=float, default=0.01)
     parser.add_argument('--lr_feat', type=float, default=0.01)
-    parser.add_argument('--lr_model', type=float, default=0.03)
+    parser.add_argument('--lr_model', type=float, default=0.01)
     parser.add_argument('--weight_decay', type=float, default=0.0)
     parser.add_argument('--dropout', type=float, default=0.5)
     # parser.add_argument('--dataset', type=str, default='ogbn-arxiv')

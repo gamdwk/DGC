@@ -1,1 +1,0 @@
-from dgl.distributed import initialize

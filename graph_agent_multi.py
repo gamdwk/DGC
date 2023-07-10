@@ -1,22 +1,18 @@
+import atexit
+import time
+
 import dgl
+import numpy as np
 import torch
+import torch as th
 import torch.nn as nn
 from dgl.distributed import DistGraph
 from torch.optim import Adam
 
-from ipc import write_syn_feat, write_syn_label_indices, read_model, write_model, del_model, del_syn
-from mmd import compute_mmd
+from ipc import write_syn_feat, read_model, write_model, del_model, del_syn
 from models.dist_gcn import DistGCN
 from models.parametrized_adj import PGE
-from sample import get_features_remote_syn
-import time
 from nic import create_start_nic, compute_nic
-import numpy as np
-import torch as th
-from dgl.dataloading import DistNodeDataLoader, NeighborSampler
-import tqdm
-import atexit
-from sample import init_g_features
 
 
 def load_subtensor(g, seeds, input_nodes, device, rate, load_labels=True):
@@ -26,6 +22,7 @@ def load_subtensor(g, seeds, input_nodes, device, rate, load_labels=True):
     """import pdb
     p = pdb.Pdb()
     p.set_trace()"""
+    from sample import get_features_remote_syn
     batch_inputs = get_features_remote_syn(g, input_nodes, rate)
     batch_inputs = batch_inputs.to(device)
     # batch_inputs = g.ndata["features"][input_nodes].to(device)
@@ -98,7 +95,7 @@ class DistGCDM(object):
             self.net_interface = "eth0"
         # self.net_interface = "eth0"
         atexit.register(del_model)
-        from ipc import wait_for_syn
+
         # wait_for_syn()
 
     def train(self):
@@ -109,15 +106,14 @@ class DistGCDM(object):
                                                         device_ids=[self.dev_id],
                                                         output_device=self.device)
 
-
         args = self.args
         model = model.to(self.device)
         self.optimizer = Adam(model.parameters(), lr=args.lr_model, weight_decay=args.weight_decay)
         fan = [int(fanout) for fanout in args.fan_out.split(",")]
 
         if args.sampler == "fast_gcn":
-            from models.fast_gcn import LayerSampler
-            sampler = LayerSampler(fan)
+            from models.fast_gcn import FastGCNSampler
+            sampler = FastGCNSampler(fan)
         else:
             sampler = dgl.dataloading.MultiLayerNeighborSampler(fan)
 
@@ -320,10 +316,11 @@ class Condenser(object):
         self.device = device
         self.dev_id = dev_id
         self.data = syn_data
-        self.feat_syn = nn.Parameter(self.data.features_syn, requires_grad=True)
-        write_syn_feat(self.feat_syn.data)
 
-        write_syn_label_indices(syn_data.syn_class_indices)
+        self.feat_syn = nn.Parameter(self.data.features_syn, requires_grad=True)
+
+        #write_syn_feat(self.feat_syn.data)
+        #write_syn_label_indices(syn_data.syn_class_indices)
         print("rank{}:{}".format(args.rank, syn_data.syn_class_indices))
         self.pge = PGE(self.feat_syn.shape[1], self.feat_syn.shape[0], args=args, nlayers=2)
 

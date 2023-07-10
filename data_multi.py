@@ -1,9 +1,9 @@
 import dgl
-from dgl.distributed import DistGraph
 import numpy as np
 import torch
 from dgl.distributed import load_partition
-from ipc import write_syn_label_indices
+
+from ipc import write_syn_label_indices, write_syn_feat_shape, write_syn_feat
 
 
 def mask_to_index(index, size):
@@ -46,7 +46,10 @@ class DGL2Data(object):
         self.labels_syn = self.generate_labels_syn(self.local_g.ndata['labels'])
         self.init_features_syn(self.local_g.ndata['features'])
         self.sampler = None
-        write_syn_label_indices(self.syn_class_indices)
+        self.shared_syn_label_indices = write_syn_label_indices(self.syn_class_indices)
+        shape = self.features_syn.shape
+        self.shared_syn_feat_shape = write_syn_feat_shape(torch.Tensor([shape[0], shape[1]]))
+        self.shared_syn_feat = write_syn_feat(self.features_syn, create=True)
         print("初始化成功")
 
     def init_features_syn(self, features):
@@ -62,11 +65,11 @@ class DGL2Data(object):
             num = self.num_class_dict[c]
             idx = self.retrieve_class(c, num)
             if idx.shape[0] < 2:
-                temp = np.zeros((2,),dtype=int)
+                temp = np.zeros((2,), dtype=int)
                 temp[0] = idx[0]
                 temp[1] = idx[0]
                 idx = temp
-                #idx = torch.cat(torch.from_numpy([idx, idx]))
+                # idx = torch.cat(torch.from_numpy([idx, idx]))
             idx = torch.from_numpy(np.squeeze(idx))
             # print(idx)
 
@@ -182,6 +185,7 @@ if __name__ == '__main__':
     from train_dgc_tranductive import condense
     from models.dist_gcn import DistGCN
     from ipc import write_model
+
     model = DistGCN(100, args.hidden, 47, nlayers=3,
                     dropout=args.dropout)
     write_model(model)

@@ -71,18 +71,19 @@ class DistSAGE(nn.Module):
             g.get_partition_book(),
             force_even=True,
         )"""
-        y = dgl.distributed.DistTensor(
-            (g.num_nodes(), self.n_hidden),
-            th.float32,
-            "h",
-            persistent=True,
-        )
         for i, layer in enumerate(self.layers):
             if i == len(self.layers) - 1:
                 y = dgl.distributed.DistTensor(
                     (g.num_nodes(), self.nclass),
                     th.float32,
                     "h_last",
+                    persistent=True,
+                )
+            else:
+                y = dgl.distributed.DistTensor(
+                    (g.num_nodes(), self.n_hidden),
+                    th.float32,
+                    "h",
                     persistent=True,
                 )
             print(
